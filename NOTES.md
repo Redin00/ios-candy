@@ -54,8 +54,25 @@
   - Rebuilt boot images with `shim/build.sh` (valid AVB footers on 64 MiB images).
 - **Execution & Hardware Verification:**
   - Booted with `fastboot boot shim/out/shim-boot-v4.img`.
+  - Discovered 60-second hardware watchdog on Tensor G5 (`watchdog_cl0` at `0x200c4000`, `watchdog_cl1` at `0x200c5000`). Implemented `disable_wdt()` in `shim/loader.c` unlocking with `0x00c0ffee` and clearing bit 0, plus `fastboot oem watchdog disable`.
+  - Configured boot-args with `debug=0x3` (`DB_HALT | DB_PRNT`), replacing `debug=0xc` (which had `DB_REBOOT = 0x4`).
   - Device jumped into shim and handed off to XNU entry point.
-  - **No more GNOC errors or reboot loops.** The kernel is running stably on Tensor G5 hardware without crashing or resetting.
+  - **No more GNOC errors or reboot loops.**
+  - The kernel ran continuously for >5 minutes without watchdog bites or resets.
+  - User performed manual hard reset (Power key long press for ~15s); confirmed via `fastboot oem bootmdhist list`:
+    - `RST_STAT: 0x0`
+    - `CDD reboot reason: 0xcccc - Long Press Power Key Reboot (MASTER DISCONNECT)`
+  - Confirms Apple XNU kernel boots and runs stably on physical Google Tensor G5 hardware.
+
+### Milestone 5 Next Steps (Console Output & Userland Transition)
+1. **Console Streamer over USB (CDC-ECM `sweetusb=2`):**
+   - Adapt `bsd/dev/sweet_usb.c` for Tensor G5 Synopsys DWC3 at `0x0c400000` (wrapper `google,dwc3-lga` at `0x0c450000`).
+   - Stream `sweet_log_ring` UDP datagrams to `192.168.7.1:5140` via `tools/sweet-usbnet.sh`.
+2. **Persistent Log to RAMOOPS (`0x95200000`):**
+   - Map `0x95200000` in `fbcon_probe` and copy all `kprintf` characters to the persistent RAMOOPS console buffer so they survive resets.
+3. **Ramdisk Root (`rd=md0`):**
+   - Provide a minimal mockfs/ramdisk with an initial diagnostic Mach-O executable to demonstrate userland entry on Tensor G5.
+
 
 
 ---

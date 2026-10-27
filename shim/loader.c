@@ -76,6 +76,22 @@ static int magic_ok(const char *m)
 
 typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 
+static void disable_wdt(void)
+{
+	volatile uint32_t *wdt0 = (volatile uint32_t *)0x200c4000UL;
+	volatile uint32_t *wdt1 = (volatile uint32_t *)0x200c5000UL;
+
+	wdt0[0x10 / 4] = 0x00c0ffee;
+	wdt0[0x08 / 4] &= ~1U;
+	wdt0[0x10 / 4] = 0;
+
+	wdt1[0x10 / 4] = 0x00c0ffee;
+	wdt1[0x08 / 4] &= ~1U;
+	wdt1[0x10 / 4] = 0;
+
+	con_str("WDT", "watchdogs disabled");
+}
+
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
@@ -138,7 +154,8 @@ const char *loader_boot(uintptr_t dtb)
 
 	uintptr_t entry_pa = p->entry_va + pa_of_va_base;
 	con_hex("JUMP", entry_pa);
-	con_str("XNU", "jumping (fbcon clears screen)");
+	con_str("XNU", "jumping to xnu entry");
+	disable_wdt();
 	con_flush();
 
 	/* Everything was written with the MMU and caches off; drop any stale I-cache lines too. */

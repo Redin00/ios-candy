@@ -385,7 +385,10 @@ void shim_main(uint64_t dtb, uint64_t entry_el)
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
 	stage = "loader";
 	const char *why = loader_boot(dtb);
-	con_str("LOADER", why);
+	con_str("LOADER FAILED", why);
+	con_flush();
+	for (;;)
+		__asm__ volatile("wfe");
 
 	stage = "mem off";
 	uint64_t mem_off = ticks_mem();
