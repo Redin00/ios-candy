@@ -92,6 +92,14 @@ static void disable_wdt(void)
 	con_str("WDT", "watchdogs disabled");
 }
 
+static void usb_vbus_enable(void)
+{
+	/* Tensor G5 LGA dp_top_csr (0x0c637000 + 0x28): bit 16 = usb3_vbus, bit 17 = usb2_vbus */
+	volatile uint32_t *dp_top = (volatile uint32_t *)0x0c637028UL;
+	*dp_top |= 0x00030000U;
+	con_hex("VBUS", *dp_top);
+}
+
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
@@ -156,6 +164,7 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex("JUMP", entry_pa);
 	con_str("XNU", "jumping to xnu entry");
 	disable_wdt();
+	usb_vbus_enable();
 	con_flush();
 
 	/* Everything was written with the MMU and caches off; drop any stale I-cache lines too. */
