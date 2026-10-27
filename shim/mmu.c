@@ -59,10 +59,14 @@ static uint64_t pt_pool[4 * NENT] __attribute__((aligned(4096)));
 
 static void dcache_inval_range(uintptr_t start, uintptr_t end)
 {
+	uint64_t sctlr;
+	__asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+	if (!(sctlr & 1))
+		return;
 	uint64_t line = 4UL << ((rsr("ctr_el0") >> 16) & 0xf);
 
 	for (uintptr_t a = start & ~(line - 1); a < end; a += line)
-		__asm__ volatile("dc ivac, %0" : : "r"(a) : "memory");
+		__asm__ volatile("dc civac, %0" : : "r"(a) : "memory");
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
@@ -80,17 +84,22 @@ int mmu_enable(struct mmu_info *info)
 	uint64_t *l2 = (uint64_t *)pool;
 	int n_l3 = 0;
 
+	uint64_t mmfr0 = rsr("id_aa64mmfr0_el1");
+	if (((mmfr0 >> 20) & 0xf) == 0)
+		return -2;	/* 16KB granule not supported by CPU hardware */
+
 	info->img_lo = img_lo;
 	info->img_hi = img_hi;
 	info->ttbr = pool;
 	if (((img_hi - 1) >> BLK_SHIFT) - (img_lo >> BLK_SHIFT) > 1)
 		return -1;	/* only room for two L3 tables */
 
-	/* L2: Device everywhere RAM or MMIO can be (first 8GB), rest unmapped */
+	/* L2: Device in first 4GB + upper RAM (0x880000000..0xaffffffff) */
 	zero_table(l2);
-	for (uint64_t i = 0; i < (8UL << 30) >> BLK_SHIFT; i++)
+	for (uint64_t i = 0; i < (4UL << 30) >> BLK_SHIFT; i++)
 		l2[i] = (i << BLK_SHIFT) | DEV_FLAGS | D_BLOCK;
-	l2[FB_PHYS >> BLK_SHIFT] = (FB_PHYS & ~(BLK_SIZE - 1)) | NC_FLAGS | D_BLOCK;
+	for (uint64_t pa = 0x880000000UL; pa < 0xb00000000UL; pa += BLK_SIZE)
+		l2[pa >> BLK_SHIFT] = pa | NC_FLAGS | D_BLOCK;
 
 	/* L3 for each block that holds part of the image */
 	for (uint64_t blk = img_lo >> BLK_SHIFT; blk <= (img_hi - 1) >> BLK_SHIFT; blk++) {

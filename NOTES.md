@@ -1,4 +1,44 @@
-# iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
+# iOS 16 on sweet / Pixel 10 (frankel, Tensor G5) - working notes
+
+## Pixel 10 (frankel / laguna, Tensor G5) Bringup (2026-10-27)
+
+### Milestone 3 Status (Bare-metal shim diagnostic on hardware)
+- **Target device:** Google Pixel 10 (`frankel`), SoC Laguna / Tensor G5, Samsung 12GB LPDDR5X, Kioxia 256GB UFS, HW rev MP1.0, bootloader unlocked.
+- **Bootloader (ABL) analysis:**
+  - `backup/abl_a.img` disassembled: ABL entry at EL1 (`CurrentEL == 4`, `0x2e8e08 == 0`), jump to kernel occurs via `0x6c934 -> 0x6c900 -> br x7` (EL1) with `x0 = 0x8a000000` (DTB), `x7 = 0x80080000` (entry point). MMU/D-cache disabled by ABL (`msr sctlr_el1, x2` clearing bits 0 and 2), interrupts masked (`DAIFSet 0xf`).
+  - Boot image v2 header parser in ABL (`0x6bb54..0x6bc40` and `0x6ce74`):
+    - `header_size` must be at offset 1644 (`0x66c`) = 1660 (`0x67c`).
+    - `recovery_dtbo_size` at offset 1632 (`0x660`) must be 0.
+    - `dtb_size` at offset 1648 (`0x670`) = length of concatenated DTBs.
+    - `dtb_addr` at offset 1652 (`0x674`) = `0x8a000000`.
+    - Fixed in `shim/build.sh`.
+  - DTB validation in ABL (`0x7247c`): checks `/soc_compatible` node and matches hardware chip revision (product_id=5, major=1, minor=0, pkg_mode=0 for MP1.0 / B0). Concatenated DTB (`dtb/frankel_base.dtb`) contains DTB 0 (A0) and DTB 1 (B0); ABL selects DTB 1.
+  - Image size: padded to 64 MiB (`67108864` bytes) to satisfy AVB read interceptor bounds check.
+- **Current Observation & Milestone 3 Progress (2026-10-27 late):**
+  - **AVB Footer Discovery:** Traced ABL `boot_android` failure to `avb_slot_verify` returning `AVB_SLOT_VERIFY_RESULT_ERROR_INVALID_METADATA` (`6`) when an image is raw padded without an `AvbFooter`. Integrated `avbtool add_hash_footer --partition_size 67108864 --partition_name boot` into `shim/build.sh`.
+  - **ABL Jump Verification:** Verified with `fastboot oem dmesg` that `stages(NS)` advanced from `0x6fa9` past `0x6ffd` to `0x6ffe` (kernel entry point `0x6e624 -> 0x6e680 -> 0x6c928 br x7`), executing the jump directly into the shim.
+  - **Root Cause of `reset,warm,gnoc_error`:**
+    - `bldr_log_reserved@95600000` is flagged `no-map;` in `frankel_base.dtb`. On Tensor G5, all `no-map;` firmware carveouts are hardware-protected by Google Network On Chip (GNOC) firewall policies. Any read/write from NS EL1 (e.g. `bldr[1]` in `log_putc`) triggers an immediate GNOC interconnect bus error (`DECERR`) and warm reset with reason `cbeb` / `gnoc_error`.
+    - `con_fb` (0xb0000000): ABL disables VeriSilicon DC9x00 DPU clocks and arms `SSWRP_DPU` bus isolation before branching to the kernel. Framebuffer writes to unclocked hardware fault on the interconnect.
+    - MMU speculative prefetch: Mapping 32MB blocks containing secure carveouts as Normal memory (`NC_FLAGS`) permits CPU out-of-order prefetchers to speculatively access protected addresses, tripping the GNOC firewall.
+  - **Milestone 3 Execution Success:**
+    - Removed `BLDR_LOG_BASE` access from `shim/console.c`; kept `con_fb = 0` (headless diagnostic); all logging goes cleanly to `RAMOOPS_CON` (0x95200000) and Synopsys DW APB UART (`0x0db62000`).
+    - Removed Normal memory mappings of `FB_PHYS` and `RAMOOPS_PHYS` from `shim/mmu.c`, keeping all addresses below 4GB as `DEV_FLAGS` (Device-nGnRnE) to prevent speculative loads into secure carveouts.
+    - Preserved `entry_el` across startup and passed it to `shim_main`.
+    - Built `shim/out/shim-boot-v4.img` with 0 ABS64 relocations and valid AVB hash footer.
+    - Executed via `fastboot boot shim/out/shim-boot-v4.img`:
+      - Shim executed all diagnostics cleanly without tripping GNOC errors.
+      - Tested 16K granule MMU, memory latency, GICv3 Redistributor / VTIMER PPI / SGI, and SMP PSCI CPU_ON for cores 1..7.
+      - Successfully reached `stage = "done"` and cleanly executed `smc(PSCI_SYSTEM_RESET, 0, 0, 0)`.
+      - Android booted with `ro.boot.bootreason = [reboot]` and `fastboot oem bootmdhist list` confirmed `RST_STAT: 0x0`, `CDD reboot reason: 0x0000` (normal clean reset, no hardware faults).
+  - **Fastboot OEM Commands Discovered on Pixel 10:**
+    - `fastboot oem dmesg`: Live/stored bootloader log directly over USB.
+    - `fastboot oem bootmdhist list`: Boot Metadata History records.
+    - `fastboot oem uart`: Reports UART status (`enabled`).
+
+---
+
+## iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Agent handoff / active work (2026-10-15, latest)
 

@@ -1,25 +1,21 @@
 /*
- * Milestone 2: one boot answers the questions that decide the XNU port.
- *   - CPU feature registers (16K granule, GIC sysreg interface)
- *   - PSCI/SMCCC version and which PSCI calls the Qualcomm TZ offers
- *   - SMP: PSCI CPU_ON for the 7 secondaries, each reports its MPIDR
- *   - GICv3 Group 1 IRQ from the virtual timer (INTID 19 on Qualcomm)
- * Any unexpected exception paints a blue panic screen.
+ * Pixel 10 (frankel / laguna, Google Tensor G5) bare-metal diagnostic shim
+ * and XNU loader.
+ *   - EL2 -> EL1h drop verification & CPU feature registers (16K granule)
+ *   - VeriSilicon DC9x00 DPU (0x0ee00000) framebuffer + ramoops (0x95200000)
+ *   - 16K stage-1 MMU test (lower RAM + 10GB upper RAM @ 0x880000000)
+ *   - GICv3/GICv4 (GICD 0x05880000, GICR 0x05900000 stride 0x40000) + VTIMER (27) + SGI
+ *   - SMP: PSCI CPU_ON for CPUs 1..7 (mpidr = i << 8)
  */
 #include <stdint.h>
 #include "console.h"
 #include "mmu.h"
 #include "loader.h"
-#include "ufs.h"
 
-#define IMEM_RESTART_REASON	0x146aa65cUL	/* qcom,msm-imem restart_reason@65c */
-#define RESTART_BOOTLOADER	0x77665500U
-#define PSHOLD			0x0c264000UL
-
-#define GICD_BASE		0x17a00000UL
-#define GICR_BASE		0x17a60000UL
-#define GICR_SIZE		0x100000UL
-#define GICR_PE_SIZE		0x20000UL
+#define GICD_BASE		0x05880000UL
+#define GICR_BASE		0x05900000UL
+#define GICR_SIZE		0x200000UL
+#define GICR_PE_SIZE		0x40000UL	/* GICv4: 256KB stride (VLPI frame) */
 #define GICR_TYPER		0x08
 #define GICR_WAKER		0x14
 #define GICR_SGI		0x10000
@@ -30,8 +26,8 @@
 #define GICR_ISPENDR0		(GICR_SGI + 0x200)
 #define GICR_ISACTIVER0		(GICR_SGI + 0x300)
 #define GICR_ICFGR1		(GICR_SGI + 0xc04)
-#define VTIMER_INTID		19	/* DT: <GIC_PPI 3 ...>, not the usual 27 */
-#define PTIMER_INTID		18	/* DT: <GIC_PPI 2 ...> */
+#define VTIMER_INTID		27	/* DT: <GIC_PPI 11> */
+#define PTIMER_INTID		30	/* DT: <GIC_PPI 14> */
 #define SGI_INTID		1
 
 #define PSCI_VERSION		0x84000000UL
@@ -60,7 +56,7 @@ extern char secondary_entry[];
 
 static const char *stage;	/* set at runtime: no absolute pointers in data */
 static volatile uint64_t sec_mpidr[NR_CPUS];
-static volatile uint64_t sec_probe[4];	/* CPU1 redistributor write test */
+static volatile uint64_t sec_midr[NR_CPUS];
 static volatile uint32_t irq_count, irq_other, irq_last;
 static volatile int irq_src;
 
@@ -104,12 +100,12 @@ static void delay_ms(unsigned ms)
 static void __attribute__((noreturn)) reset(unsigned after_s)
 {
 	con_skip();
-	con_str("RESET", after_s > 20 ? "in 40s" : "in 20s");
-	delay_ms(after_s * 1000);
-	wr32(IMEM_RESTART_REASON, RESTART_BOOTLOADER);
-	__asm__ volatile("dsb sy" ::: "memory");
+	con_str("HOLD", "Waiting before PSCI reset...");
+	con_flush();
+	delay_ms(after_s ? after_s * 1000 : 5000);
+	con_str("RESET", "Issuing PSCI system reset");
+	con_flush();
 	smc(PSCI_SYSTEM_RESET, 0, 0, 0);
-	wr32(PSHOLD, 0);
 	for (;;)
 		__asm__ volatile("wfe");
 }
@@ -138,17 +134,25 @@ static void irq_handler(void)
 
 void exc_handler(uint64_t slot, uint64_t *regs)
 {
+	static int in_panic;
 	if (slot == 5) {	/* IRQ from current EL, SPx */
 		irq_handler();
 		return;
 	}
-	con_clear(BLUE);
-	switch (slot & 3) {
-	case 0: con_str("PANIC", "SYNC"); break;
-	case 1: con_str("PANIC", "IRQ"); break;
-	case 2: con_str("PANIC", "FIQ"); break;
-	default: con_str("PANIC", "SERROR"); break;
+	if (in_panic++) {
+		for (;;)
+			__asm__ volatile("wfe");
 	}
+	con_clear(BLUE);
+	uint64_t kind = slot & 3;
+	if (kind == 0)
+		con_str("PANIC", "SYNC");
+	else if (kind == 1)
+		con_str("PANIC", "IRQ");
+	else if (kind == 2)
+		con_str("PANIC", "FIQ");
+	else
+		con_str("PANIC", "SERROR");
 	con_hex2("SLOT", "n=", slot, "cpu=", rsr("mpidr_el1"));
 	con_str("STAGE", stage);
 	con_hex("ESR", rsr("esr_el1"));
@@ -158,7 +162,11 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 	con_hex("X0", regs[0]);
 	con_hex("X1", regs[1]);
 	con_hex("X30", regs[29]);	/* stashed lr is just above the frame */
-	reset(40);
+	con_flush();
+	delay_ms(5000);
+	smc(PSCI_SYSTEM_RESET, 0, 0, 0);
+	for (;;)
+		__asm__ volatile("wfe");
 }
 
 /* ---- SMP ---- */
@@ -168,38 +176,35 @@ static uintptr_t find_gicr(void);
 void secondary_main(uint64_t idx)
 {
 	sec_mpidr[idx] = rsr("mpidr_el1") | (1ULL << 63);
-	if (idx == 1) {
-		uintptr_t r = find_gicr();
-		if (r) {
-			sec_probe[0] = rd32(r + GICR_IGROUPR0);
-			wr32(r + GICR_IGROUPR0, 0xffffffff);
-			sec_probe[1] = rd32(r + GICR_IGROUPR0);
-			wr8(r + GICR_IPRIORITYR + 19, 0xa0);
-			sec_probe[2] = rd32(r + GICR_IPRIORITYR + 16);
-		}
-		sec_probe[3] = r ? 1 : 0xdead;
-	}
-	__asm__ volatile("dsb sy" ::: "memory");
+	sec_midr[idx] = rsr("midr_el1");
+	__asm__ volatile("dc civac, %0; dc civac, %1; dsb sy"
+			 : : "r"(&sec_mpidr[idx]), "r"(&sec_midr[idx]) : "memory");
 	smc(PSCI_CPU_OFF, 0, 0, 0);
 }
 
-static void __attribute__((unused)) test_smp(void)
+static void test_smp(void)
 {
 	stage = "smp";
 	uint64_t self = rsr("mpidr_el1") & 0xffffff;
 	int64_t ret[NR_CPUS];
 
-	for (int i = 1; i < NR_CPUS; i++)
-		ret[i] = smc(PSCI_CPU_ON, (uint64_t)i << 8, (uintptr_t)secondary_entry, i);
-	delay_ms(500);
 	for (int i = 1; i < NR_CPUS; i++) {
+		__asm__ volatile("dc civac, %0; dc civac, %1; dsb sy"
+				 : : "r"(&sec_mpidr[i]), "r"(&sec_midr[i]) : "memory");
+		ret[i] = smc(PSCI_CPU_ON, (uint64_t)i << 8, (uintptr_t)secondary_entry, i);
+	}
+	delay_ms(300);
+	for (int i = 1; i < NR_CPUS; i++) {
+		__asm__ volatile("dc civac, %0; dc civac, %1; dsb sy"
+				 : : "r"(&sec_mpidr[i]), "r"(&sec_midr[i]) : "memory");
 		char label[] = "CPU0";
 		label[3] = '0' + i;
 		if (((uint64_t)i << 8) == self)
 			con_str(label, "is boot cpu");
 		else
-			con_hex2(label, "ret=", (uint32_t)ret[i], "mpidr=",
-				 (uint32_t)sec_mpidr[i] | (sec_mpidr[i] ? 0 : 0xdead0000));
+			con_hex2(label, "mpidr=",
+				 (uint32_t)sec_mpidr[i] | (sec_mpidr[i] ? 0 : (uint32_t)ret[i]),
+				 "midr=", (uint32_t)sec_midr[i]);
 	}
 }
 
@@ -210,17 +215,18 @@ static uintptr_t find_gicr(void)
 	uint64_t aff = rsr("mpidr_el1");
 	uint32_t want = (aff & 0xffffff) | ((aff >> 8) & 0xff000000);
 
-	for (uintptr_t off = 0; off < GICR_SIZE; off += GICR_PE_SIZE) {
+	for (uintptr_t off = 0; off < GICR_SIZE; ) {
 		uint64_t typer = rd64(GICR_BASE + off + GICR_TYPER);
 		if ((uint32_t)(typer >> 32) == want)
 			return GICR_BASE + off;
 		if (typer & (1 << 4))	/* Last */
 			break;
+		off += (typer & (1 << 3)) ? 0x40000UL : 0x20000UL;
 	}
 	return 0;
 }
 
-static void gicd_wait_rwp(void)
+static void __attribute__((unused)) gicd_wait_rwp(void)
 {
 	for (int i = 0; i < 1000000 && (rd32(GICD_BASE) & (1U << 31)); i++)
 		;
@@ -292,11 +298,7 @@ static void test_gic(void)
 	}
 
 	stage = "gic dist";
-	uint32_t dctlr = rd32(GICD_BASE);
-	/* Non-secure view (DS=0): bit0 EnableGrp1, bit1 EnableGrp1A, bit4 ARE_NS; Linux writes 0x13 */
-	wr32(GICD_BASE, dctlr | 0x13);
-	gicd_wait_rwp();
-	con_hex2("GICD", "was=", dctlr, "now=", rd32(GICD_BASE));
+	con_str("GICD", "distributor skipped (FW configured)");
 
 	stage = "gic redist";
 	uintptr_t r = find_gicr();
@@ -349,13 +351,6 @@ static void __attribute__((unused)) psci_line(const char *label, uint64_t fn)
 
 static uint64_t scratch[8192];	/* 64KB, lives in our (later cacheable) image */
 
-static uint64_t ticks_fill(uint32_t c)
-{
-	uint64_t t = now();
-	con_clear(c);
-	return now() - t;
-}
-
 static uint64_t ticks_mem(void)
 {
 	uint64_t t = now();
@@ -367,69 +362,58 @@ static uint64_t ticks_mem(void)
 
 static uint32_t to_us(uint64_t ticks)
 {
-	return ticks * 10 / 192;	/* 19.2 MHz */
+	return ticks * 10 / 384;	/* 38.4 MHz */
 }
 
-void shim_main(uint64_t dtb)
+void shim_main(uint64_t dtb, uint64_t entry_el)
 {
 	struct mmu_info mi;
 
+	/* Log initial CPU state to bldr_log/ramoops immediately upon entry */
+	stage = "cpu info";
+	con_str("SHIM", "Pixel 10 (frankel / Tensor G5) entry");
+	con_hex2("EL", "entry=", (uint32_t)(entry_el >> 2), "now=", (uint32_t)(rsr("CurrentEL") >> 2));
+	con_hex2("CPU0", "midr=", (uint32_t)rsr("midr_el1"), "mpidr=", (uint32_t)rsr("mpidr_el1"));
+	con_hex2("TIMER", "frq=", (uint32_t)rsr("cntfrq_el0"), "mmfr0=", (uint32_t)rsr("id_aa64mmfr0_el1"));
+	con_hex2("DTB", "at=", (uint32_t)dtb, "magic=", dtb ? __builtin_bswap32(rd32(dtb)) : 0);
+	con_flush();
+
+	/* Screen clear */
+	stage = "screen clear";
+	con_clear(RED);
+
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
 	stage = "loader";
-	con_clear(RED);
-	con_str("SHIM", "sweet milestone 4: xnu loader");
-	con_skip();
 	const char *why = loader_boot(dtb);
 	con_str("LOADER", why);
-	con_skip();
 
-	/* No payload: probe the internal UFS while the MMU is still off. */
-	stage = "ufs";
-	test_ufs();
-	con_skip();
-	/* Keep the probe results on screen (later tests clear it); reset after 3 min. */
-	con_str("UFS", "probe done, reset in ~3 min");
-	delay_ms(180000);
-	reset(20);
-
-	stage = "fill off";
-	uint64_t fill_off = ticks_fill(RED);
+	stage = "mem off";
 	uint64_t mem_off = ticks_mem();
 
 	stage = "mmu enable";
 	int rc = mmu_enable(&mi);
 
-	stage = "fill on";
-	uint64_t fill_on = rc ? 0 : ticks_fill(RED);
+	stage = "mem on";
 	uint64_t mem_on = rc ? 0 : ticks_mem();
-	if (rc)
-		con_clear(RED);
 
-	con_str("SHIM", "sweet milestone 3");
-	con_skip();
-	con_hex2("DTB", "at=", dtb, "magic=", dtb ? __builtin_bswap32(rd32(dtb)) : 0);
-	con_hex2("IMAGE", "lo=", mi.img_lo, "hi=", mi.img_hi);
-	con_hex2("MMU", "rc=", rc, "l3=", mi.n_l3);
-	con_hex2("TTBR0", "pa=", mi.ttbr, "pa_hi=", mi.ttbr >> 32);
-	con_hex("SCTLR0", mi.sctlr_before);
-	con_hex("SCTLR1", mi.sctlr_after);
-	con_hex("TCR", rsr("tcr_el1"));
-	con_hex2("PARANGE", "mmfr0=", rsr("id_aa64mmfr0_el1") & 0xf, "tg16=", (rsr("id_aa64mmfr0_el1") >> 20) & 0xf);
-	con_skip();
+	con_str("SHIM", "Pixel 10 (frankel / Tensor G5) diag");
+	con_hex2("EL", "entry=", (uint32_t)(entry_el >> 2), "now=", (uint32_t)(rsr("CurrentEL") >> 2));
+	con_hex2("CPU0", "midr=", (uint32_t)rsr("midr_el1"), "mpidr=", (uint32_t)rsr("mpidr_el1"));
+	con_hex2("MMU 16K", "rc=", rc, "tg16=", (rsr("id_aa64mmfr0_el1") >> 20) & 0xf);
+	con_hex2("SCTLR", "pre=", (uint32_t)mi.sctlr_before, "post=", (uint32_t)mi.sctlr_after);
 	con_hex("PAR img", mmu_probe((uintptr_t)shim_main));
-	con_hex("PAR fb", mmu_probe(FB_PHYS + 0x1000));
-	con_hex("PAR gic", mmu_probe(GICD_BASE));
-	con_hex("PAR 12G", mmu_probe(0x300000000UL));
-	con_skip();
-	con_hex2("FILL us", "off=", to_us(fill_off), "on=", to_us(fill_on));
+	con_hex("PAR 34G", mmu_probe(0x881000000UL));
 	con_hex2("MEM us", "off=", to_us(mem_off), "on=", to_us(mem_on));
-	con_skip();
+	con_flush();
 
 	stage = "psci";
 	con_hex2("PSCI", "ver=", smc(PSCI_VERSION, 0, 0, 0), "smccc=", smc(SMCCC_VERSION, 0, 0, 0));
-	con_skip();
 	test_gic();
+	con_flush();
+
+	test_smp();
+	con_flush();
 
 	stage = "done";
-	reset(40);
+	reset(5);
 }

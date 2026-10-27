@@ -1,14 +1,15 @@
 /*
- * sweet boot shim entry: arm64 Linux Image header so Qualcomm ABL treats
- * us like a kernel. ABL enters at EL1, MMU/D-cache off, x0 = DTB pointer.
+ * Pixel 10 (frankel / laguna, Tensor G5) boot shim entry:
+ * arm64 Linux Image header so ABL treats us like a kernel.
+ * ABL enters at EL2 (or EL1), MMU/D-cache off, x0 = DTB pointer (0x8a000000).
  */
 	.section .text.head, "ax"
 	.globl _head
 _head:
 	b	_start			/* code0 */
 	.long	0			/* code1 */
-	.quad	0			/* text_offset */
-	.quad	_end			/* image_size (linked at 0) */
+	.quad	0x80000			/* text_offset */
+	.quad	_end - _head		/* image_size */
 	.quad	0xa			/* flags: LE, 4K pages, place anywhere */
 	.quad	0			/* res2 */
 	.quad	0			/* res3 */
@@ -17,10 +18,59 @@ _head:
 	.long	0			/* res5 (PE offset) */
 
 	.text
+/*
+ * Drop from EL2 to EL1h if CurrentEL == EL2.
+ * Preserves x0, x19, x20, x30 (lr). Clobbers x1, x2.
+ */
+drop_el2_to_el1:
+	mrs	x1, CurrentEL
+	cmp	x1, #0x8
+	b.ne	1f
+	/* Enable EL1 access to GICv3 CPU interface (ICC_SRE_EL2) */
+	mrs	x2, S3_4_C12_C9_5
+	orr	x2, x2, #0x8		/* Enable (bit 3) */
+	orr	x2, x2, #0x1		/* SRE (bit 0) */
+	msr	S3_4_C12_C9_5, x2
+	isb
+	msr	S3_4_C12_C11_0, xzr	/* ICH_HCR_EL2 = 0 */
+	/* Enable EL1 access to physical/virtual timers */
+	mrs	x2, cnthctl_el2
+	orr	x2, x2, #0x3		/* EL1PCTEN | EL1PCEN */
+	msr	cnthctl_el2, x2
+	msr	cntvoff_el2, xzr
+	/* HCR_EL2: RW=1 (bit 31), APK=1 (bit 40), API=1 (bit 41) */
+	mov	x2, #(1 << 31)
+	movk	x2, #0x0300, lsl #32
+	msr	hcr_el2, x2
+	/* Disable EL2 FP/SIMD traps */
+	mov	x2, #0x33ff
+	msr	cptr_el2, x2
+	/* Mirror MIDR/MPIDR to virtual ID registers */
+	mrs	x2, midr_el1
+	msr	vpidr_el2, x2
+	mrs	x2, mpidr_el1
+	msr	vmpidr_el2, x2
+	/* Clean SCTLR_EL1 before entering EL1 (MMU/caches off) */
+	mov	x2, #0x0800
+	movk	x2, #0x30d0, lsl #16
+	msr	sctlr_el1, x2
+	/* ERET to EL1h with DAIF masked */
+	mov	x2, #0x3c5
+	msr	spsr_el2, x2
+	msr	elr_el2, x30
+	isb
+	eret
+1:	ret
+
 	.globl _start
 _start:
 	msr	daifset, #0xf
 	mov	x19, x0			/* DTB pointer from ABL */
+	mrs	x20, CurrentEL		/* Record entry EL before any drop */
+	bl	drop_el2_to_el1
+	/* Enable FP/SIMD at EL1 (CPACR_EL1.FPEN = 3) */
+	mov	x1, #(3 << 20)
+	msr	cpacr_el1, x1
 	msr	spsel, #1
 	adr	x1, _stack_top
 	mov	sp, x1
@@ -35,6 +85,7 @@ _start:
 	str	xzr, [x1], #8
 	b	1b
 2:	mov	x0, x19
+	mov	x1, x20			/* Pass entry EL to shim_main */
 	bl	shim_main
 3:	wfe
 	b	3b
@@ -43,7 +94,12 @@ _start:
 	.globl secondary_entry
 secondary_entry:
 	msr	daifset, #0xf
+	mov	x19, x0
+	bl	drop_el2_to_el1
+	mov	x1, #(3 << 20)
+	msr	cpacr_el1, x1
 	msr	spsel, #1
+	mov	x0, x19
 	adr	x1, _sec_stacks
 	add	x1, x1, x0, lsl #12
 	add	x1, x1, #0x1000

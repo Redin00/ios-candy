@@ -1,7 +1,9 @@
 #pragma once
 #include <stdint.h>
 
-#define FB_PHYS	0x9c000000UL
+#define FB_PHYS		0xb0000000UL
+#define FB_ALT_PHYS	0xc4a00000UL
+#define RAMOOPS_PHYS	0x95200000UL
 
 struct mmu_info {
 	uint64_t img_lo, img_hi, ttbr;
