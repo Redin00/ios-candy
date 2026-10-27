@@ -73,5 +73,30 @@ dma_bounce = [
 for idx, insn in enumerate(dma_bounce):
     struct.pack_into("<I", data, 0x4e8b10 + idx * 4, insn)
 
+# 9. 0xa76f64 (VA 0x7a7af64): NOP fbcon_init (ret) to prevent clearing RAMOOPS buffer
+struct.pack_into("<I", data, 0xa76f64, 0xd65f03c0)
+
+# 10. 0xa77030 (VA 0x7a7b030): ramoops_putc hook in fbcon_transmit_data
+ramoops_putc = [
+    0xb0002fc1,  # adrp x1, 0xfffffe0008074000
+    0xf940b421,  # ldr x1, [x1, #0x168] (fbcon_base = RAMOOPS_CON VA)
+    0xb40001a1,  # cbz x1, +52 (ret)
+    0xb9400822,  # ldr w2, [x1, #8] (current size/len)
+    0x52800003,  # mov w3, #0
+    0x72a003e3,  # movk w3, #0x1f, lsl #16 (0x1f0000 = MAX)
+    0x6b03005f,  # cmp w2, w3
+    0x54000102,  # b.hs +32 (ret)
+    0x91003024,  # add x4, x1, #12 (data buffer)
+    0x38224880,  # strb w0, [x4, w2, uxtw] (data[len] = c)
+    0x11000442,  # add w2, w2, #1 (len++)
+    0xb9000822,  # str w2, [x1, #8] (update size)
+    0x52884883,  # mov w3, #0x4244
+    0x72a868e3,  # movk w3, #0x4347, lsl #16 (0x43474244 = 'DBGC')
+    0xb9000023,  # str w3, [x1] (update sig)
+    0xd65f03c0,  # ret
+]
+for idx, insn in enumerate(ramoops_putc):
+    struct.pack_into("<I", data, 0xa77030 + idx * 4, insn)
+
 open(PATH, "wb").write(data)
 print(f"Successfully applied Milestone 5 patches to {PATH}")
