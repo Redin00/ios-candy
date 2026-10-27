@@ -64,14 +64,27 @@
     - `CDD reboot reason: 0xcccc - Long Press Power Key Reboot (MASTER DISCONNECT)`
   - Confirms Apple XNU kernel boots and runs stably on physical Google Tensor G5 hardware.
 
-### Milestone 5 Next Steps (Console Output & Userland Transition)
-1. **Console Streamer over USB (CDC-ECM `sweetusb=2`):**
-   - Adapt `bsd/dev/sweet_usb.c` for Tensor G5 Synopsys DWC3 at `0x0c400000` (wrapper `google,dwc3-lga` at `0x0c450000`).
-   - Stream `sweet_log_ring` UDP datagrams to `192.168.7.1:5140` via `tools/sweet-usbnet.sh`.
-2. **Persistent Log to RAMOOPS (`0x95200000`):**
-   - Map `0x95200000` in `fbcon_probe` and copy all `kprintf` characters to the persistent RAMOOPS console buffer so they survive resets.
-3. **Ramdisk Root (`rd=md0`):**
-   - Provide a minimal mockfs/ramdisk with an initial diagnostic Mach-O executable to demonstrate userland entry on Tensor G5.
+### Milestone 5 Status (USB CDC-ECM Console & Ramdisk Root Bringup)
+- **Prepared Ramdisk Root (`rd=md0`):**
+  - Assembled `tools/sweet-init.S` via `clang -target arm64-apple-ios16.0`.
+  - Built static ad-hoc signed Mach-O `tools/init.macho` using `tools/mkinit.py`.
+  - Configured `tools/mkpayload.py` to embed `tools/init.macho` as a RAMDisk at `0x8824c8000` (`size=0x8000`) and declare `/chosen/memory-map/RAMDisk` in the ADT.
+- **Ported Synopsys DWC3 USB Driver (`sweet_usb`) to Google Tensor G5:**
+  - Relocated DWC3 physical base from Qualcomm `0x0a600000` to Tensor G5 `0x0c400000` (`sweet_usb_probe` at `0x4e89ec`).
+  - Bypassed Qualcomm GCC register probe at `0x00100000` (`0x4e8850` branches directly to DWC3 init).
+  - Bypassed Qualcomm QUSB2 PHY probe at `0x088e2000` (`0x4e8b48` branches directly to clean epilogue `0x74ecbc4`).
+  - Bypassed Qualcomm QSCRATCH VBUS override at `0x0a6f8800` (`0x4e90b4` branches directly to DCTL RUN_STOP).
+  - Fixed `sweet_usb_gadget_start` completion exit (`0x4e9218`) to return directly to epilogue rather than jumping to Qualcomm PHY.
+  - Implemented `sweet_md0_trampoline` at `0x4e8860`: hooked `IOFindBSDRoot` md0 mount completion (`0xa3d9ac`) to automatically trigger `sweet_usb_probe()` when booting with `rd=md0`.
+  - Scripted automated patching in `tools/patch_kernel_pixel10_m5.py`.
+- **Host Networking & Console Listener Setup:**
+  - Added NetworkManager connection `ios-sweet` matching device MAC `02:00:5e:77:ee:01` with static IP `192.168.7.1/24`.
+  - Implemented and launched daemon `tools/listen_console.py` listening on UDP 5140 (saving to `logs/live-pixel10.txt`).
+- **Artifacts Built:**
+  - `tools/init.macho` (16,635 bytes)
+  - `xnu/out-0081/xnu-kernel/kernel.pixel10` (patched with Milestone 5 USB & md0 hooks)
+  - `shim/out/payload-pixel10.bin` (16.6 MB with embedded ramdisk and cmdline `debug=0x3 serial=3 cpus=1 keepsyms=1 rd=md0 sweetusb=2`)
+  - `shim/out/shim-boot-v4.img` (64 MiB AVB signed boot image)
 
 
 
