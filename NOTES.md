@@ -80,11 +80,19 @@
 - **Host Networking & Console Listener Setup:**
   - Added NetworkManager connection `ios-sweet` matching device MAC `02:00:5e:77:ee:01` with static IP `192.168.7.1/24`.
   - Implemented and launched daemon `tools/listen_console.py` listening on UDP 5140 (saving to `logs/live-pixel10.txt`).
-- **Artifacts Built:**
-  - `tools/init.macho` (16,635 bytes)
-  - `xnu/out-0081/xnu-kernel/kernel.pixel10` (patched with Milestone 5 USB & md0 hooks)
-  - `shim/out/payload-pixel10.bin` (16.6 MB with embedded ramdisk and cmdline `debug=0x3 serial=3 cpus=1 keepsyms=1 rd=md0 sweetusb=2`)
-  - `shim/out/shim-boot-v4.img` (64 MiB AVB signed boot image)
+- **Artifacts Built & Commits:**
+  - `tools/init.macho` (16,635 bytes): static Mach-O PID 1 (`/sbin/launchd`).
+  - `xnu/out-0081/xnu-kernel/kernel.pixel10`: patched with Milestone 5 USB & md0 hooks, 32-bit DMA bounce buffer, and RAMOOPS console driver.
+  - `shim/out/payload-pixel10.bin` (16.6 MB with embedded ramdisk and cmdline `debug=0x3 serial=3 cpus=1 keepsyms=1 rd=md0 sweetusb=2`).
+  - `shim/out/shim-boot-v4.img` (64 MiB AVB signed boot image).
+  - Commits:
+    - `d3fcf81`: `pixel10: allocate DWC3 USB DMA bounce buffer in 32-bit lower RAM at 0x8b000000`
+    - `72fa415`: `pixel10: direct kprintf console output to persistent RAMOOPS (0x95200000)`
+- **Observations & Key Findings (2026-10-28):**
+  - Verified with `fastboot oem bootmdhist list`: `CDD reboot reason: 0xcccc` (manual Power key long-press). The kernel ran stably with watchdog disabled and without tripping GNOC faults or resetting.
+  - From `dtb/frankel.dts` line 30171: `simple_usb_bus` specifies `dma-ranges = <0x0 0x0 0x0 0x0 0x1 0x0>`, strictly restricting Synopsys DWC3 to addresses `< 4 GB`. Replaced `kmem_alloc_contig` with lower DRAM bounce buffer at physical `0x8b000000` (`_ml_io_map(0x8b000000, 0x4000)`).
+  - From ABL analysis at `0x12a28`: bit 0 of `0x0c637044` controls USB TOP enable. Added `*(0x0c637044) |= 1` in `shim/loader.c`.
+  - Implemented persistent kernel logging to `RAMOOPS_CON` (`0x95200000`): pointed `sweet-fbcon` node in ADT to `0x95200000`, NOP'd `fbcon_init`, and patched `fbcon_transmit_data` to append every character to the DBGC ramoops buffer so kernel console output survives reboots.
 
 
 
