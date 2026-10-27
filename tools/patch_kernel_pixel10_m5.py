@@ -57,5 +57,21 @@ struct.pack_into("<I", data, 0x4e9218, 0x17fffe6b)
 # 7. 0xa3d9ac (VA 0x7a419ac): b 0x74ec860 (hook md0 completion to trampoline)
 struct.pack_into("<I", data, 0xa3d9ac, 0x17eaabad)
 
+# 8. 0x4e8b10 (VA 0x74ecb10): use 32-bit bounce buffer at 0x8b000000 for DWC3 DMA (<4GB)
+dma_bounce = [
+    0x52800000,  # mov w0, #0
+    0x72b16000,  # movk w0, #0x8b00, lsl #16 (0x8b000000)
+    0x52880001,  # mov w1, #0x4000 (16KB)
+    0x97fe8df9,  # bl 0xfffffe0007490300 <_ml_io_map>
+    0xf9000680,  # str x0, [x20, #0x8] (ud.dma = va)
+    0x52800008,  # mov w8, #0
+    0x72b16008,  # movk w8, #0x8b00, lsl #16 (0x8b000000)
+    0xd0005b29,  # adrp x9, 0xfffffe0008052000
+    0xf9059128,  # str x8, [x9, #0xb20] (ud.dma_pa = 0x8b000000)
+    0x1400003c,  # b 0xfffffe00074ecc24
+]
+for idx, insn in enumerate(dma_bounce):
+    struct.pack_into("<I", data, 0x4e8b10 + idx * 4, insn)
+
 open(PATH, "wb").write(data)
 print(f"Successfully applied Milestone 5 patches to {PATH}")

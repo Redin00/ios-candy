@@ -94,6 +94,13 @@ static void disable_wdt(void)
 
 static void usb_vbus_enable(void)
 {
+	/* Zero out the 32-bit DMA bounce buffer in lower DRAM for DWC3 */
+	zero64(0x8b000000UL, 0x4000UL);
+
+	/* Tensor G5 LGA dp_top_csr (0x0c637000 + 0x44): bit 0 = enable */
+	volatile uint32_t *dp_top_en = (volatile uint32_t *)0x0c637044UL;
+	*dp_top_en |= 0x1U;
+
 	/* Tensor G5 LGA dp_top_csr (0x0c637000 + 0x28): bit 16 = usb3_vbus, bit 17 = usb2_vbus */
 	volatile uint32_t *dp_top = (volatile uint32_t *)0x0c637028UL;
 	*dp_top |= 0x00030000U;
