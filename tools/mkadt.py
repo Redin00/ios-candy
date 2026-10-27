@@ -39,6 +39,18 @@ VTIMER_INTID = 19
 QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE = 0x08000000, 0x080a0000, 62500000
 QEMU_VTIMER_INTID = 27
 
+# Pixel 10 (frankel / laguna, Google Tensor G5) hardware constants
+PIXEL10_SOC_BASE = 0x05000000
+PIXEL10_GICD, PIXEL10_GICD_SIZE = 0x05880000, 0x10000
+PIXEL10_GICR, PIXEL10_GICR_SIZE = 0x05900000, 0x200000
+PIXEL10_PHYS_BASE = 0x880000000
+PIXEL10_MEM_SIZE = 0x80000000  # 2 GB in upper 10GB DRAM bank (34GB..36GB)
+PIXEL10_TIMEBASE = 38400000     # 38.4 MHz
+PIXEL10_VTIMER_INTID = 27       # PPI 11 -> INTID 27
+PIXEL10_FB_W, PIXEL10_FB_H, PIXEL10_FB_STRIDE = 1080, 2424, 1080 * 4
+PIXEL10_FB, PIXEL10_FB_SIZE = 0x888000000, 1080 * 2424 * 4
+PIXEL10_UFS, PIXEL10_UFS_SIZE = 0x3c400000, 0x10000
+
 BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 
 # The iOS userland is the iPhone X (iPhone10,3 / D22AP) IPSW. MobileGestalt
@@ -74,13 +86,53 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False):
-    """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
-    phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
+def build(seed=None, qemu=False, highmem=False, pixel10=False):
+    """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ.
+       pixel10=True: Google Pixel 10 (frankel / laguna, Tensor G5) hardware tree."""
+    if pixel10:
+        phys_base, mem_size = PIXEL10_PHYS_BASE, PIXEL10_MEM_SIZE
+        soc_base = PIXEL10_SOC_BASE
+        gicd, gicd_size = PIXEL10_GICD, PIXEL10_GICD_SIZE
+        gicr, gicr_size = PIXEL10_GICR, PIXEL10_GICR_SIZE
+        timebase = PIXEL10_TIMEBASE
+        vtimer_intid = PIXEL10_VTIMER_INTID
+        fb, fb_size = PIXEL10_FB, PIXEL10_FB_SIZE
+        fb_w, fb_h, fb_stride = PIXEL10_FB_W, PIXEL10_FB_H, PIXEL10_FB_STRIDE
+        ufs, ufs_size = PIXEL10_UFS, PIXEL10_UFS_SIZE
+    elif highmem:
+        phys_base, mem_size = HIGH_PHYS_BASE, HIGH_MEM_SIZE
+        soc_base = SOC_BASE
+        gicd, gicd_size = GICD, GICD_SIZE
+        gicr, gicr_size = GICR, GICR_SIZE
+        timebase = TIMEBASE
+        vtimer_intid = VTIMER_INTID
+        fb, fb_size = FB, FB_SIZE
+        fb_w, fb_h, fb_stride = FB_W, FB_H, FB_STRIDE
+        ufs, ufs_size = UFS, UFS_SIZE
+    elif qemu:
+        phys_base, mem_size = PHYS_BASE, MEM_SIZE
+        soc_base = SOC_BASE
+        gicd, gicd_size = QEMU_GICD, GICD_SIZE
+        gicr, gicr_size = QEMU_GICR, GICR_SIZE
+        timebase = QEMU_TIMEBASE
+        vtimer_intid = QEMU_VTIMER_INTID
+        fb, fb_size = FB, FB_SIZE
+        fb_w, fb_h, fb_stride = FB_W, FB_H, FB_STRIDE
+        ufs, ufs_size = UFS, UFS_SIZE
+    else:
+        phys_base, mem_size = PHYS_BASE, MEM_SIZE
+        soc_base = SOC_BASE
+        gicd, gicd_size = GICD, GICD_SIZE
+        gicr, gicr_size = GICR, GICR_SIZE
+        timebase = TIMEBASE
+        vtimer_intid = VTIMER_INTID
+        fb, fb_size = FB, FB_SIZE
+        fb_w, fb_h, fb_stride = FB_W, FB_H, FB_STRIDE
+        ufs, ufs_size = UFS, UFS_SIZE
+
     # Carve the panic log off the top so the kernel never allocates over it.
     panic_base = phys_base + mem_size - PANIC_LOG_SIZE
     mem_size -= PANIC_LOG_SIZE
-    gicd, gicr, timebase = (QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu else (GICD, GICR, TIMEBASE)
     seed = seed if seed is not None else os.urandom(64)
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
@@ -135,6 +187,15 @@ def build(seed=None, qemu=False, highmem=False):
     # QEMU retains its original single-CPU tree: its MPIDRs differ from sweet.
     cpu_nodes = []
     for core in range(1 if qemu else 8):
+        if pixel10:
+            if core < 2:
+                clk = 1950000000
+            elif core < 7:
+                clk = 3000000000
+            else:
+                clk = 3400000000
+        else:
+            clk = 2304000000 if core >= 6 else 1804800000
         cpu_nodes.append(node(f'cpu{core}', [
             ph(),
             ('device_type', cstr('cpu')),
@@ -149,7 +210,7 @@ def build(seed=None, qemu=False, highmem=False):
             ('l3-cache-id', u32(0)),     # shared L3
             ('state', cstr('running' if core == 0 else 'stopped')),
             ('timebase-frequency', u32(timebase)),
-            ('clock-frequency', u32(2304000000 if core >= 6 else 1804800000)),
+            ('clock-frequency', u32(clk)),
             ('bus-frequency', u32(100000000)),
             ('memory-frequency', u32(1866000000)),
             ('peripheral-frequency', u32(timebase)),
@@ -162,8 +223,8 @@ def build(seed=None, qemu=False, highmem=False):
         ph(),
         ('compatible', cstr('arm,gic-v3')),
         ('interrupt-controller', b''),
-        ('virtual-timer-intid', u32(QEMU_VTIMER_INTID if qemu else VTIMER_INTID)),
-        ('reg', u64(gicd - SOC_BASE, GICD_SIZE, gicr - SOC_BASE, GICR_SIZE)),
+        ('virtual-timer-intid', u32(vtimer_intid)),
+        ('reg', u64(gicd - soc_base, gicd_size, gicr - soc_base, gicr_size)),
     ])
     arm_io = node('arm-io', [
         ph(),
@@ -171,7 +232,7 @@ def build(seed=None, qemu=False, highmem=False):
         ('compatible', cstr('sweet-io') + cstr('arm-io')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-        ('ranges', u64(0, SOC_BASE, 0x100000000 - SOC_BASE)),
+        ('ranges', u64(0, soc_base, 0x100000000 - soc_base)),
     ], [gic,
         # No hardware: watchdogd checks IODeviceTree:/arm-io/wdt for no-pmu and
         # otherwise crashes trying to set the PMU boot stage (customer builds
@@ -191,17 +252,17 @@ def build(seed=None, qemu=False, highmem=False):
 
     fbcon = node('sweet-fbcon', [
         ph(),
-        ('reg', u64(FB, FB_SIZE)),
-        ('width', u32(FB_W)),
-        ('height', u32(FB_H)),
-        ('stride', u32(FB_STRIDE)),
+        ('reg', u64(fb, fb_size)),
+        ('width', u32(fb_w)),
+        ('height', u32(fb_h)),
+        ('stride', u32(fb_stride)),
     ])
 
     # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
     ufs = node('sweet-ufs', [
         ph(),
         ('compatible', cstr('qcom,ufshc')),
-        ('reg', u64(UFS, UFS_SIZE)),
+        ('reg', u64(ufs, ufs_size)),
     ])
 
     # pmap_compute_max_asids requires the node even when no overrides are set.
@@ -231,7 +292,7 @@ def build(seed=None, qemu=False, highmem=False):
     # (iPhone10,3). 'xiaomi,sweet' stays for SweetPlatformExpert matching.
     return node('device-tree', [
         ph(),
-        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('qcom,sm7150') + cstr('AppleARM')),
+        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('google,laguna') + cstr('qcom,sm7150') + cstr('AppleARM')),
         ('model', cstr('iPhone10,3')),
         ('target-type', cstr('D22')),
         ('target-sub-type', cstr('D22AP')),
@@ -242,7 +303,7 @@ def build(seed=None, qemu=False, highmem=False):
 
 
 if __name__ == '__main__':
-    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv)
+    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, pixel10='--pixel10' in sys.argv or '--frankel' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:

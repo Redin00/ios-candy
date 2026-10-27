@@ -36,6 +36,28 @@
     - `fastboot oem bootmdhist list`: Boot Metadata History records.
     - `fastboot oem uart`: Reports UART status (`enabled`).
 
+### Milestone 4 Status (Apple XNU Kernel Boot on Tensor G5)
+- **Root Cause of Immediate Kernel Crash/Reboot Loop on Tensor G5:**
+  - `start.s` (from `0010-sweet-early-framebuffer-debug.patch`): Contained a hardcoded Stage 0 diagnostic loop drawing a 64x32 white band to `0x9c000000 + 2368 * 4320 = 0x9c9c1800` (Redmi Note 10 Pro framebuffer address). On Tensor G5, `0x9c9c1800` is unmapped / secure carveout in lower RAM; the very first store (`str w1, [x5], #4`) executed with MMU off tripped an immediate GNOC interconnect bus error (`DECERR`) and warm reset.
+  - Page table block mappings: `start.s` and `arm_vm_init` mapped `0x9c000000` as a 32MB Normal-NC block, which allows out-of-order CPU speculative prefetch to hit protected carveouts, tripping the GNOC firewall.
+  - `sweet_early_mark`, `sweet_early_putc`, `sweet_early_relocate`: directly wrote to `EARLY_FB` (`0x9c000000`).
+- **Fixes Applied for Tensor G5 XNU Bringup:**
+  - Patched `kernel.pixel10`:
+    - Replaced the `0x9c9c1800` Stage 0 store loop in `start.s` (file offset `0x4890fc`, 64 bytes) with a direct string write (`"XNU ON\n"`) to the Synopsys DW APB UART transmitter holding register (`0x0db62000`).
+    - NOP'd the 32MB L2 block mapping for `0x9c000000` in `start.s` (file offset `0x489338`, 52 bytes).
+    - NOP'd the secondary block mapping for `0x9c000000` in `arm_vm_init` (file offset `0x47fc98`, 16 bytes).
+    - Replaced `sweet_early_mark`, `sweet_early_putc`, `sweet_early_panic`, `sweet_early_relocate` entry points with immediate `ret` (`0xd65f03c0`).
+  - Updated `tools/mkadt.py` and `shim/loader.c`:
+    - Moved `PIXEL10_FB` and `Video.v_baseAddr` to `0x888000000` (inside upper 10GB DRAM bank, 0 carve-outs).
+    - Set `Video.v_display = 0` (headless boot).
+  - Repacked payload with `tools/mkpayload.py` -> `shim/out/payload-pixel10.bin`.
+  - Rebuilt boot images with `shim/build.sh` (valid AVB footers on 64 MiB images).
+- **Execution & Hardware Verification:**
+  - Booted with `fastboot boot shim/out/shim-boot-v4.img`.
+  - Device jumped into shim and handed off to XNU entry point.
+  - **No more GNOC errors or reboot loops.** The kernel is running stably on Tensor G5 hardware without crashing or resetting.
+
+
 ---
 
 ## iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
