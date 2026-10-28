@@ -35,15 +35,15 @@ static void log_putc(char c)
 	if (!ramoops_len)
 		con_init();
 	if (ramoops_len < RAMOOPS_MAX) {
-		volatile uint32_t *hdr = (volatile uint32_t *)RAMOOPS_CON;
-		volatile char *data = (volatile char *)(RAMOOPS_CON + 12);
+		volatile uint32_t *hdr = (volatile uint32_t *)RAMOOPS_PMSG;
+		volatile char *data = (volatile char *)(RAMOOPS_PMSG + 12);
 		uint32_t idx = ramoops_len++;
 		data[idx] = c;
 		hdr[0] = RAMOOPS_SIG;
 		hdr[1] = 0;		/* start: oldest data at offset 0 */
 		hdr[2] = ramoops_len;	/* size: valid data count */
 		dc_civac((uintptr_t)&data[idx]);
-		dc_civac(RAMOOPS_CON);
+		dc_civac(RAMOOPS_PMSG);
 	}
 	/* Synopsys DW APB UART serial0 (0x0db62000) TX if active */
 	volatile uint32_t *lsr = (volatile uint32_t *)(0x0db62000UL + 0x14);
@@ -69,9 +69,9 @@ static void con_init(void)
 	con_fb = 0;
 	con_fb_alt = 0;
 
-	/* Initialize ramoops offset by checking existing ABL log buffer */
+	/* Initialize ramoops offset by checking existing log buffer in PMSG */
 	if (!ramoops_len) {
-		volatile uint32_t *hdr = (volatile uint32_t *)RAMOOPS_CON;
+		volatile uint32_t *hdr = (volatile uint32_t *)RAMOOPS_PMSG;
 		if (hdr[0] == RAMOOPS_SIG && hdr[2] > 0 && hdr[2] < RAMOOPS_MAX)
 			ramoops_len = hdr[2];
 		else
