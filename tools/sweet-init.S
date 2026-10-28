@@ -17,6 +17,7 @@
 #define SYS_reboot	55
 #define SYS_select	93
 #define O_RDWR		2
+#define O_WRONLY	1
 
 	.text
 	.globl	_start
@@ -32,12 +33,26 @@ _start:
 	and	x9, x9, #~15
 	mov	sp, x9
 
+	/* Try opening /dev/console with O_RDWR */
 	adr	x0, path
 	mov	x1, #O_RDWR
 	mov	x2, #0
 	mov	x16, #SYS_open
 	svc	#0x80
-	b.cs	hang			/* no console: nothing to report to */
+	bcc	have_fd
+
+	/* Try opening /dev/console with O_WRONLY */
+	adr	x0, path
+	mov	x1, #O_WRONLY
+	mov	x2, #0
+	mov	x16, #SYS_open
+	svc	#0x80
+	bcc	have_fd
+
+	/* Fallback: use stdout (fd 1) */
+	mov	x0, #1
+
+have_fd:
 	mov	x19, x0
 
 	adr	x1, hello
@@ -108,6 +123,7 @@ _start:
 	mov	x16, #SYS_reboot
 	svc	#0x80
 
+	/* Fallback hang only if reboot somehow failed */
 hang:
 	b	hang
 
