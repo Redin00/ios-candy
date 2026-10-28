@@ -119,5 +119,19 @@ psci_reset = [
 for idx, insn in enumerate(psci_reset):
     struct.pack_into("<I", data, 0x9f91ec + idx * 4, insn)
 
+# 13. Route all panic hang/spin loops (wfe; b .) to PSCI_SYSTEM_RESET helper
+# Helper at 0x481204 (VA 0x7485204, inside sweet_early_panic right after ret):
+for idx, insn in enumerate(psci_reset):
+    struct.pack_into("<I", data, 0x481204 + idx * 4, insn)
+
+# 13a. 0x321608 (VA 0x7325608): in _handle_debugger_trap when panicDebugging != 0
+struct.pack_into("<I", data, 0x321608, 0x14057eff)  # b 0x7485204
+
+# 13b. 0x321a08 (VA 0x7325a08): in _panic_trap_to_debugger replacing DebuggerTrapWithState & wfe loop
+struct.pack_into("<I", data, 0x321a08, 0x14057dff)  # b 0x7485204
+
+# 13c. 0x321c34 (VA 0x7325c34): in _panic_spin_forever replacing wfe loop
+struct.pack_into("<I", data, 0x321c34, 0x14057d74)  # b 0x7485204
+
 open(PATH, "wb").write(data)
 print(f"Successfully applied Milestone 5 patches to {PATH}")
