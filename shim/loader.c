@@ -154,6 +154,8 @@ const char *loader_boot(uintptr_t dtb)
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
 		return "no initrd in /chosen";
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
+	/* before the slow MMU-off copy: a watchdog bite here never comes back */
+	disable_wdt();
 #ifdef SHIM_READSRC
 	{	/* read the whole ramdisk: hangs here if part of it is inaccessible */
 		uint64_t sum = 0;
@@ -224,7 +226,6 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex("JUMP", entry_pa);
 	con_str("XNU", "jumping to xnu entry");
 	probe(3);
-	disable_wdt();
 	probe(4);
 	usb_vbus_enable();
 	con_flush();
