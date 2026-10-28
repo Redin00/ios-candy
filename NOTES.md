@@ -83,16 +83,21 @@
 - **Artifacts Built & Commits:**
   - `tools/init.macho` (16,635 bytes): static Mach-O PID 1 (`/sbin/launchd`).
   - `xnu/out-0081/xnu-kernel/kernel.pixel10`: patched with Milestone 5 USB & md0 hooks, 32-bit DMA bounce buffer, and RAMOOPS console driver.
-  - `shim/out/payload-pixel10.bin` (16.6 MB with embedded ramdisk and cmdline `debug=0x3 serial=3 cpus=1 keepsyms=1 rd=md0 sweetusb=2`).
+  - `shim/out/payload-pixel10.bin` (16.6 MB with embedded ramdisk and cmdline `debug=0x3 serial=0x23 cpus=1 keepsyms=1 rd=md0 sweetusb=2`).
   - `shim/out/shim-boot-v4.img` (64 MiB AVB signed boot image).
   - Commits:
     - `d3fcf81`: `pixel10: allocate DWC3 USB DMA bounce buffer in 32-bit lower RAM at 0x8b000000`
     - `72fa415`: `pixel10: direct kprintf console output to persistent RAMOOPS (0x95200000)`
+    - `b5aa386`: `docs: update NOTES.md with 32-bit DMA bounce buffer and RAMOOPS console logging`
+    - `4abbae1`: `pixel10: fix DWC3 ifnet_init stack pointer and format RAMOOPS DBGC header for Linux`
 - **Observations & Key Findings (2026-10-28):**
   - Verified with `fastboot oem bootmdhist list`: `CDD reboot reason: 0xcccc` (manual Power key long-press). The kernel ran stably with watchdog disabled and without tripping GNOC faults or resetting.
   - From `dtb/frankel.dts` line 30171: `simple_usb_bus` specifies `dma-ranges = <0x0 0x0 0x0 0x0 0x1 0x0>`, strictly restricting Synopsys DWC3 to addresses `< 4 GB`. Replaced `kmem_alloc_contig` with lower DRAM bounce buffer at physical `0x8b000000` (`_ml_io_map(0x8b000000, 0x4000)`).
   - From ABL analysis at `0x12a28`: bit 0 of `0x0c637044` controls USB TOP enable. Added `*(0x0c637044) |= 1` in `shim/loader.c`.
   - Implemented persistent kernel logging to `RAMOOPS_CON` (`0x95200000`): pointed `sweet-fbcon` node in ADT to `0x95200000`, NOP'd `fbcon_init`, and patched `fbcon_transmit_data` to append every character to the DBGC ramoops buffer so kernel console output survives reboots.
+  - **Identified and fixed `sweet_usb_probe` register fault:** The jump at `0x4e8b34` into `0x74ecc24` had skipped `add x22, sp, #0x48`, leaving `x22` uninitialized during `ifnet_init_params` setup. Restored `add x22, sp, #0x48`.
+  - **Identified and fixed Linux ramoops header compatibility:** In Linux `persistent_ram_old_size()`, `head >= buffer_size || count > buffer_size` causes the persistent buffer to be ignored as corrupt. Initialized `sig = 0x43474244 ('DBGC')`, `start = 0`, and maintained `size = len`.
+  - **Fixed console routing bit in cmdline:** `serial=3` only enabled bits 0 and 1 (UART and DOCKCHANNEL). Added bit 0x20 (`SERIAL_SWEET_FBCON`), updating cmdline to `serial=0x23` so `kprintf` routes to `fbcon_transmit_data`.
 
 
 
