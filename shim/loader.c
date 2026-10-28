@@ -154,6 +154,14 @@ const char *loader_boot(uintptr_t dtb)
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
 		return "no initrd in /chosen";
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
+#ifdef SHIM_READSRC
+	{	/* read the whole ramdisk: hangs here if part of it is inaccessible */
+		uint64_t sum = 0;
+		for (uintptr_t a = rd_start & ~7UL; a + 8 <= rd_end; a += 8)
+			sum += *(volatile uint64_t *)a;
+		con_hex("RDSUM", sum);
+	}
+#endif
 	probe(1);
 
 	const struct payload *p = (const struct payload *)rd_start;
@@ -177,6 +185,10 @@ const char *loader_boot(uintptr_t dtb)
 		copy64(dst, rd_start + s->file_off, s->file_size);
 		if (s->vmsize > s->file_size)
 			zero64(dst + ((s->file_size + 7) & ~7UL), s->vmsize - ((s->file_size + 7) & ~7UL));
+#ifdef SHIM_SEG
+		if (i == SHIM_SEG)
+			probe(SHIM_PROBE);
+#endif
 	}
 	con_hex2("SEGS", "n=", p->nsegs, "end=", p->kernel_end + pa_of_va_base);
 	probe(2);
