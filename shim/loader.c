@@ -88,6 +88,13 @@ static void probe(int n)
 {
 	if (n != SHIM_PROBE)
 		return;
+#ifdef SHIM_TOUCH
+	/* write + read back one word: hangs here if SHIM_TOUCH is not accessible */
+	volatile uint64_t *t = (volatile uint64_t *)(uintptr_t)SHIM_TOUCH;
+	*t = 0x5357454554ULL;
+	(void)*t;
+	__asm__ volatile("dsb sy" ::: "memory");
+#endif
 	con_hex("PROBE", n);
 	con_flush();
 	register uint64_t x0 __asm__("x0") = 0x84000009UL;	/* PSCI_SYSTEM_RESET */
@@ -130,6 +137,18 @@ static void usb_vbus_enable(void)
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
+
+	/*
+	 * MMU off = every instruction fetch goes uncached to DRAM, which makes
+	 * the ~22 MB copy below crawl. SCTLR_EL1.I is architecturally allowed
+	 * with the MMU off (fetches become Normal cacheable); data stays Device.
+	 */
+	{
+		uint64_t sctlr;
+		__asm__ volatile("ic iallu; dsb sy; isb; mrs %0, sctlr_el1" : "=r"(sctlr));
+		sctlr |= 1UL << 12;
+		__asm__ volatile("msr sctlr_el1, %0; isb" : : "r"(sctlr));
+	}
 
 	if (!fdt_chosen_u64(dtb, "linux,initrd-start", &rd_start) ||
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
