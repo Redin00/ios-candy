@@ -112,11 +112,30 @@
     - Step 4: Full kernel execution with PID 1 (`tools/init.macho` as `/sbin/launchd`). Process 1 spawned, executed, printed banner/heartbeats, and executed `SYS_reboot` (syscall 55), triggering an automated warm PSCI reboot back to Android (`ro.boot.bootreason = reboot`).
   - **Milestone 5 Completed:** Userspace execution on physical Google Tensor G5 / Pixel 10 hardware fully achieved!
 
-### Milestone 6 Roadmap (Full iOS 16 Root Mount from UFS & Apple launchd)
-- User approved using internal UFS `userdata` partition for iOS root (Android may be replaced in userdata, no GPT changes; recovery, modem, persist, bootloader kept intact).
-- Step 1: Bring up Tensor G5 UFS host controller driver in XNU (`sweet_ufs.c` / `ufshc@3c400000`).
-- Step 2: Mount HFS+ root from UFS `userdata` (`rd=disk0sN` or `rd=ufsroot0`).
-- Step 3: Launch unmodified Apple `/sbin/launchd` from iOS 16.7.16 `20H392`.
+### Milestone 6 Roadmap & Status (Full iOS 16 Root Mount from UFS & Apple launchd)
+- **Artifacts Downloaded & Verified (2026-10-28):**
+  - Downloaded official Apple iOS 16.7.16 (`20H392`, iPhone X `iPhone10,3`) restore DMGs directly from Apple CDN via `tools/remotezip.py` into `/home/redinn/IT_Stuff/Projects/ios-artifacts/`:
+    - `087-86698-044.dmg` (OS rootfs, 4,730,814,044 bytes, CRC-32 ok)
+    - `087-86593-047.dmg` (SystemOS cryptex, 2,743,074,816 bytes, CRC-32 ok)
+    - `087-86715-047.dmg` (AppOS cryptex, 10,485,760 bytes, CRC-32 ok)
+- **Step 1 Completed & Verified on Physical Hardware (UFS Driver on Tensor G5):**
+  - Implemented and verified hardware bisection probes (`ufs_userdata` at `0x4e34e0`, `ufs_done` at `0x4e3690`) in `tools/patch_kernel_pixel10_m5.py`.
+  - Replaced panic handlers with infinite `wfe; b .` loops so any driver failure or panic halts the device, while reaching the probe triggers clean PSCI reset.
+  - Executed read-only UFS probe via RAM boot (`fastboot boot` with `rd=ufsroot0`):
+    - XNU successfully mapped UFSHCI registers at `0x3c400000`.
+    - 64-bit DMA allocation above 4GB (`0x880000000`) accepted by UFSHCI (`CAP_64AS`).
+    - Polled SCSI `TEST UNIT READY` (0x00) succeeded on LUN 0.
+    - Polled SCSI `READ(10)` read LBA 1 and verified GPT signature (`EFI PART`).
+    - Partition search parsed GPT table and matched `userdata` (`/dev/block/sda35`).
+    - `bdevsw_add` and `cdevsw_add_with_bdev` registered `/dev/ufsroot0`.
+    - Both `ufs_userdata` and `ufs_done` probes executed cleanly, triggering automated warm PSCI reset back to Android (`ADB_UP` verified in 1m35s, `ro.boot.bootreason = reboot`, `cdd_reboot_reason = 1:0000`).
+    - Android installation, partitions, and user data remained 100% untouched.
+- **Step 2 (Active / Next):**
+  - Build HFS+ root image `ios16-root-20H392.img` with `tools/mkiosroot.sh` using host tools `apfs-fuse-git` and `hfsprogs`.
+  - Apply `tools/sweet-root-tweaks.py`.
+  - Flash to `userdata` (`fastboot flash -S 512M userdata ios16-root-20H392.simg`) after confirming backup/destructive step with user.
+- **Step 3:**
+  - Boot full iOS 16.7.16 system and run unmodified Apple `/sbin/launchd`.
 
 
 
