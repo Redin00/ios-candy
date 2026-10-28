@@ -133,5 +133,27 @@ struct.pack_into("<I", data, 0x321a08, 0x14057dff)  # b 0x7485204
 # 13c. 0x321c34 (VA 0x7325c34): in _panic_spin_forever replacing wfe loop
 struct.pack_into("<I", data, 0x321c34, 0x14057d74)  # b 0x7485204
 
+# 14. Optional bisection probe: SWEET_PROBE=<name> replaces one instruction with
+# a branch to the PSCI reset helper. If the phone warm-resets into Android, that
+# point was reached (and pstore keeps the console log).
+import os
+
+HELPER_VA = 0xfffffe0007485204
+FILE_TO_VA = 0xfffffe0007004000
+PROBES = {
+    "xnu_entry": 0x4890fc,  # start.s stage-0 (former UART "XNU ON" write)
+    "md0": 0x4e8860,  # md0 mount hook, before sweet_usb_probe
+    "md0_after_usb": 0x4e8864,  # md0 mount hook, after sweet_usb_probe returned
+}
+probe = os.environ.get("SWEET_PROBE")
+if probe:
+    off = PROBES[probe]
+    delta = HELPER_VA - (off + FILE_TO_VA)
+    assert -0x8000000 <= delta < 0x8000000 and delta % 4 == 0
+    struct.pack_into("<I", data, off, 0x14000000 | ((delta >> 2) & 0x3FFFFFF))
+    print(f"SWEET_PROBE={probe}: PSCI reset at file 0x{off:x}")
+    # keep the base kernel clean: probes go to a separate file
+    PATH = PATH + ".probe"
+
 open(PATH, "wb").write(data)
 print(f"Successfully applied Milestone 5 patches to {PATH}")
