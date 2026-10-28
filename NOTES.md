@@ -90,6 +90,8 @@
     - `72fa415`: `pixel10: direct kprintf console output to persistent RAMOOPS (0x95200000)`
     - `b5aa386`: `docs: update NOTES.md with 32-bit DMA bounce buffer and RAMOOPS console logging`
     - `4abbae1`: `pixel10: fix DWC3 ifnet_init stack pointer and format RAMOOPS DBGC header for Linux`
+    - `cedb3e7`: `pixel10: route RAMOOPS to pmsg (0x95400000) and add automated clean warm reset to init.macho`
+    - `7f7d879`: `pixel10: fallback from O_RDWR to O_WRONLY/stdout in init without hanging`
 - **Observations & Key Findings (2026-10-28):**
   - Verified with `fastboot oem bootmdhist list`: `CDD reboot reason: 0xcccc` (manual Power key long-press). The kernel ran stably with watchdog disabled and without tripping GNOC faults or resetting.
   - From `dtb/frankel.dts` line 30171: `simple_usb_bus` specifies `dma-ranges = <0x0 0x0 0x0 0x0 0x1 0x0>`, strictly restricting Synopsys DWC3 to addresses `< 4 GB`. Replaced `kmem_alloc_contig` with lower DRAM bounce buffer at physical `0x8b000000` (`_ml_io_map(0x8b000000, 0x4000)`).
@@ -98,6 +100,8 @@
   - **Identified and fixed `sweet_usb_probe` register fault:** The jump at `0x4e8b34` into `0x74ecc24` had skipped `add x22, sp, #0x48`, leaving `x22` uninitialized during `ifnet_init_params` setup. Restored `add x22, sp, #0x48`.
   - **Identified and fixed Linux ramoops header compatibility:** In Linux `persistent_ram_old_size()`, `head >= buffer_size || count > buffer_size` causes the persistent buffer to be ignored as corrupt. Initialized `sig = 0x43474244 ('DBGC')`, `start = 0`, and maintained `size = len`.
   - **Fixed console routing bit in cmdline:** `serial=3` only enabled bits 0 and 1 (UART and DOCKCHANNEL). Added bit 0x20 (`SERIAL_SWEET_FBCON`), updating cmdline to `serial=0x23` so `kprintf` routes to `fbcon_transmit_data`.
+  - **Root cause of missing RAMOOPS log in Linux:** ABL's early DBL boot sequence writes its own bootloader log (~1.09 MB) to `0x95200000` (the 2MB console zone of ramoops) on every boot, clobbering anything written there. The secondary 2MB zone `RAMOOPS_PMSG` at `0x95400000` is untouched by ABL. Rerouted `sweet-fbcon` and `shim/console.c` to `0x95400000`, matching Linux `/sys/fs/pstore/pmsg-ramoops-0`.
+  - **Identified PID 1 hang in `sweet-init.S`:** `open("/dev/console", O_RDWR)` returned `EROFS` on `mockfs`, triggering `b.cs hang` (infinite loop) before any output or reboot. Fixed to try `O_WRONLY` and fallback to `stdout` (fd 1), proceeding unconditionally to `SYS_reboot` (syscall 55) for automated PSCI warm reset.
 
 
 
