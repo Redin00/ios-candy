@@ -387,8 +387,8 @@ void shim_main(uint64_t dtb, uint64_t entry_el)
 	const char *why = loader_boot(dtb);
 	con_str("LOADER FAILED", why);
 	con_flush();
-	for (;;)
-		__asm__ volatile("wfe");
+	/* never hang silently: a reset back into Android is observable */
+	reset(1);
 
 	stage = "mem off";
 	uint64_t mem_off = ticks_mem();
