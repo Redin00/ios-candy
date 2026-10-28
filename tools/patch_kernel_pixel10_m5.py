@@ -108,5 +108,16 @@ for idx, insn in enumerate(ramoops_putc):
 # to prevent speculative prefetch across 0x95400000 into bldr_log_reserved@95600000
 struct.pack_into("<I", data, 0xa775b0, 0x97e854b4)
 
+# 12. 0x9f91f4 (VA 0x79fd1f4): implement PSCI_SYSTEM_RESET (0x84000009) in haltRestart
+# replacing Apple's hardcoded "while (1);" hang loop
+psci_reset = [
+    0x52800120,  # mov w0, #9
+    0x72b08000,  # movk w0, #0x8400, lsl #16 (0x84000009 = PSCI_SYSTEM_RESET)
+    0xd4000003,  # smc #0
+    0x14000000,  # b .
+]
+for idx, insn in enumerate(psci_reset):
+    struct.pack_into("<I", data, 0x9f91f4 + idx * 4, insn)
+
 open(PATH, "wb").write(data)
 print(f"Successfully applied Milestone 5 patches to {PATH}")
