@@ -102,6 +102,21 @@
   - **Fixed console routing bit in cmdline:** `serial=3` only enabled bits 0 and 1 (UART and DOCKCHANNEL). Added bit 0x20 (`SERIAL_SWEET_FBCON`), updating cmdline to `serial=0x23` so `kprintf` routes to `fbcon_transmit_data`.
   - **Root cause of missing RAMOOPS log in Linux:** ABL's early DBL boot sequence writes its own bootloader log (~1.09 MB) to `0x95200000` (the 2MB console zone of ramoops) on every boot, clobbering anything written there. The secondary 2MB zone `RAMOOPS_PMSG` at `0x95400000` is untouched by ABL. Rerouted `sweet-fbcon` and `shim/console.c` to `0x95400000`, matching Linux `/sys/fs/pstore/pmsg-ramoops-0`.
   - **Identified PID 1 hang in `sweet-init.S`:** `open("/dev/console", O_RDWR)` returned `EROFS` on `mockfs`, triggering `b.cs hang` (infinite loop) before any output or reboot. Fixed to try `O_WRONLY` and fallback to `stdout` (fd 1), proceeding unconditionally to `SYS_reboot` (syscall 55) for automated PSCI warm reset.
+  - **Identified and fixed Apple XNU `haltRestart` hang loop:** In `_ZN18IODTPlatformExpert11haltRestartEj` (`0x9f91ec`), Apple hardcoded `while(1);` for CPU restart (`kPERestartCPU`). Replaced unconditionally at entry with `mov w0, #0x84000009; smc #0` (PSCI_SYSTEM_RESET).
+  - **Identified and fixed Apple XNU panic hang loops:** Found three internal `wfe; b .` hang loops in XNU panic handlers (`_handle_debugger_trap` at `0x7325608`, `_panic_trap_to_debugger` at `0x7325a08`, and `_panic_spin_forever` at `0x7325c34`) designed to spin for JTAG. Redirected all three to PSCI reset helper at `0x7485204`.
+  - **Root Cause of Shim Hang during 22MB Copy:** The hardware watchdog (`watchdog_cl0` at `0x200c4000`) had a 60-second hardware timeout. Because the MMU was off, copying the 22MB XNU payload took ~70s. `disable_wdt()` was previously located AFTER the copy loop. Moving `disable_wdt()` and enabling `SCTLR_EL1.I` BEFORE the copy loop resolved the hang completely.
+  - **Milestone 5 Hardware Verification (2026-10-28):**
+    - Step 1: `xnu_entry` probe at `0x4890fc` (`_start`) reached and executed PSCI reset (`ADB_UP` verified).
+    - Step 2: `md0` probe at `0x4e8860` (`IOFindBSDRoot` mount completion) reached and executed PSCI reset (`ADB_UP` verified), proving XNU successfully initialized MMU, interrupts, VTIMER, Mach, BSD, VFS, and mounted mockfs ramdisk as root.
+    - Step 3: `md0_after_usb` probe at `0x4e8864` reached and executed PSCI reset (`ADB_UP` verified), proving Synopsys DWC3 USB driver initialized cleanly with 32-bit bounce buffer at `0x8b000000`.
+    - Step 4: Full kernel execution with PID 1 (`tools/init.macho` as `/sbin/launchd`). Process 1 spawned, executed, printed banner/heartbeats, and executed `SYS_reboot` (syscall 55), triggering an automated warm PSCI reboot back to Android (`ro.boot.bootreason = reboot`).
+  - **Milestone 5 Completed:** Userspace execution on physical Google Tensor G5 / Pixel 10 hardware fully achieved!
+
+### Milestone 6 Roadmap (Full iOS 16 Root Mount from UFS & Apple launchd)
+- User approved using internal UFS `userdata` partition for iOS root (Android may be replaced in userdata, no GPT changes; recovery, modem, persist, bootloader kept intact).
+- Step 1: Bring up Tensor G5 UFS host controller driver in XNU (`sweet_ufs.c` / `ufshc@3c400000`).
+- Step 2: Mount HFS+ root from UFS `userdata` (`rd=disk0sN` or `rd=ufsroot0`).
+- Step 3: Launch unmodified Apple `/sbin/launchd` from iOS 16.7.16 `20H392`.
 
 
 
