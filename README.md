@@ -4,24 +4,40 @@
 
 This project ports Apple's open-source XNU kernel (`xnu-8796`, the iOS 16 generation) to the **Google Pixel 10** (`frankel`, SoC `laguna` / Google Tensor G5). On top of it runs the **unmodified iOS 16.7.16 (`20H392`) userland of the iPhone X (`iPhone10,3` / `D22AP`)**: `launchd`, system daemons, `backboardd`, `SpringBoard`, and stock applications.
 
-> [!NOTE]
-> Experimental bring-up. Device bring-up uses temporary RAM-boot images (`fastboot boot`). Bootloader, recovery, modem, persist, and Android firmware partitions remain intact.
+---
+
+## Hardware Platform (Reference Test Device)
+
+The specifications below represent the **physical reference device used for development and hardware testing**. The kernel storage driver and boot shim are designed to adapt dynamically across storage capacities and devices sharing the Tensor G5 platform.
+
+| Component | Test Device Specification | Compatibility & Variations |
+| --- | --- | --- |
+| **Device / SKU** | Google Pixel 10 (`frankel`, SKU `GK2MP`), HW rev MP1.0, bootloader unlocked | Compatible with Tensor G5 (`laguna`) family devices (e.g. Pixel 10 / Pro / XL / Fold) |
+| **SoC** | Google Tensor G5 (`laguna`), ARMv9.2-A | Identical MMIO layout across Tensor G5 platforms |
+| **CPU Cluster** | 8 cores: 1× Cortex-X4 @ 3.40 GHz, 5× Cortex-A725 @ 3.00 GHz, 2× Cortex-A520 @ 1.95 GHz | Homogeneous SMP scheduling via PSCI CPU_ON |
+| **Memory** | 12 GiB LPDDR5X (Samsung) | XNU manages 2 GiB in the upper DRAM bank at `0x880000000` (34 GiB..36 GiB) with 16 KiB translation pages |
+| **Internal Storage** | 256 GiB Kioxia UFS 4.0 (`userdata` @ `/dev/block/sda35`, 220 GiB, 4096-byte blocks) | **Dynamic GPT discovery**: compatible with 128 GiB, 256 GiB, and 512 GiB storage tiers |
+| **Storage Controller** | Google UFSHCI host controller at `0x3c400000` | 64-bit DMA addressing (`CAP_64AS`) above 4 GiB |
+| **USB** | Synopsys DWC3 at `0x0c400000` (device mode CDC-ECM) | Interconnect restricted to 32-bit DMA (`< 4 GiB`); bounce buffer at `0x8b000000` |
+| **Interrupts & Timer** | ARM GICv3 (GICD `0x05880000`, GICR `0x05900000`), VTIMER PPI 11 (INTID 27), frequency 38.4 MHz | Standard ARM Generic Timer & GICv3 architecture |
+| **Console & Logs** | Persistent DBGC ramoops ring at `0x95400000`, Synopsys DW APB UART at `0x0db62000`, live UDP stream (port 5140) | Preserved across warm PSCI reboots |
+| **Security / Reset** | Titan M2 security chip; ARM PSCI warm reset via SMC (`0x84000009`) | Standard PSCI system reset interface |
 
 ---
 
-## Hardware Platform: Google Pixel 10 (`frankel`)
+## Execution Model: Bring-Up Harness vs Persistent iOS
 
-| Component | Hardware Specification |
-| --- | --- |
-| **Device / SKU** | Google Pixel 10 (`frankel`, SKU `GK2MP`), HW rev MP1.0, bootloader unlocked |
-| **SoC** | Google Tensor G5 (`laguna`), ARMv9.2-A |
-| **CPU Cluster** | 8 cores: 1× Cortex-X4 @ 3.40 GHz, 5× Cortex-A725 @ 3.00 GHz, 2× Cortex-A520 @ 1.95 GHz |
-| **Memory** | 12 GiB LPDDR5X (Samsung). XNU operates in the upper DRAM bank at `0x880000000` (34 GiB..36 GiB) with 16 KiB pages |
-| **Interrupts & Timer** | ARM GICv3 (GICD at `0x05880000`, GICR at `0x05900000`), VTIMER PPI 11 (INTID 27), generic timer at 38.4 MHz |
-| **Storage** | 256 GiB Kioxia UFS 4.0, Google UFSHCI host controller at `0x3c400000`. GPT partition `userdata` at `/dev/block/sda35` (LUN 0, 220 GiB, 4096-byte blocks) |
-| **USB** | Synopsys DWC3 at `0x0c400000`. Interconnect restricted to 32-bit DMA (`< 4 GiB`); bounce buffer placed at `0x8b000000` |
-| **Console & Logs** | Persistent DBGC ramoops ring at `0x95400000` (survives warm PSCI reboots), Synopsys DW APB UART at `0x0db62000`, UDP live console over CDC-ECM USB (port 5140) |
-| **Security / Reset** | Titan M2 security chip; ARM PSCI warm reset via SMC (`0x84000009`) |
+A key architectural distinction exists between **how the kernel is loaded during bring-up** and **how iOS executes**:
+
+1. **Kernel Loading (Temporary Bring-Up Harness):**
+   - During active development, the boot image is delivered via `fastboot boot shim-boot-v4.img`.
+   - The kernel and boot shim are loaded directly into RAM via USB **without overwriting the device's boot partition (`boot_a`)**.
+   - This provides a non-destructive harness: a simple device restart returns immediately to Android without brick risk.
+   - **Untethered Target:** Once stable, the boot image can be flashed permanently to the `boot` partition (`fastboot flash boot shim-boot-v4.img`), allowing the Pixel 10 to power on directly into iOS standalone without a computer.
+
+2. **Persistent iOS Execution (Physical Internal UFS):**
+   - **iOS does NOT run in a ramdisk.** The 16 GiB unmodified Apple root filesystem (`launchd`, dyld shared cache, UIKit, frameworks, system apps) lives directly on the physical internal UFS flash inside the `userdata` partition (`/dev/block/sda35`).
+   - The Apple XNU kernel mounts the physical HFS+ filesystem from UFS via `sweet_ufs` (`rd=ufsroot0`), reading binaries, frameworks, and writing data persistently to the physical flash chip, exactly like real Apple hardware.
 
 ---
 
@@ -42,7 +58,7 @@ This project ports Apple's open-source XNU kernel (`xnu-8796`, the iOS 16 genera
   - Process 1 spawned, executed, printed banner, and executed `SYS_reboot` (syscall 55) triggering automated PSCI reset back to Android.
   - Synopsys DWC3 USB driver ported with 32-bit DMA bounce buffer at `0x8b000000`.
 - **Milestone 6 (Full iOS 16 Root Mount from UFS & Apple `launchd`):** 🔄 In Progress
-  - **Storage Hardware Verification:** ✅ Verified on hardware. Read-only UFS probe verified that XNU takes over UFSHCI at `0x3c400000`, 64-bit DMA works, reads physical GPT partition table (`EFI PART`), finds `userdata` (`/dev/block/sda35`), and registers `/dev/ufsroot0`.
+  - **Storage Hardware Verification:** ✅ Verified on physical hardware. Read-only UFS probe verified that XNU takes over UFSHCI at `0x3c400000`, 64-bit DMA works, reads physical GPT partition table (`EFI PART`), finds `userdata` (`/dev/block/sda35`), and registers `/dev/ufsroot0`.
   - **Apple Artifacts:** ✅ Downloaded and verified official iOS 16.7.16 (`20H392`) restore DMGs (`087-86698-044.dmg`, `087-86593-047.dmg`, `087-86715-047.dmg`).
   - **Next Step:** Assemble case-sensitive HFS+ image `ios16-root-20H392.img`, apply bring-up tweaks, flash to `userdata`, and launch unmodified Apple `/sbin/launchd`.
 
@@ -53,7 +69,7 @@ This project ports Apple's open-source XNU kernel (`xnu-8796`, the iOS 16 genera
 ```
 Google ABL (stock Pixel 10 bootloader, unlocked)
   -> fastboot boot shim-boot-v4.img            (temporary in RAM; boot partition untouched)
-     -> shim: disables watchdog, sets up 16K MMU, loads XNU payload from ramdisk
+     -> shim: disables watchdog, sets up 16K MMU, loads XNU payload
         -> XNU Mach-O (kernel.pixel10) + Apple Device Tree (ADT) + boot-args
            -> sweet_ufs driver -> physical GPT partition (userdata on UFS LUN 0)
               -> dyld + dyld shared cache -> /sbin/launchd -> iOS daemons
@@ -65,7 +81,7 @@ Google ABL (stock Pixel 10 bootloader, unlocked)
 
 ### 1. Requirements
 
-- Physical Google Pixel 10 (`frankel`), bootloader unlocked.
+- Physical Google Pixel 10 (`frankel`) or compatible Tensor G5 device with bootloader unlocked.
 - Linux host PC (Arch Linux recommended) with `fastboot`, `adb`, `img2simg`, `rsync`.
 - Host tools for root creation: `apfs-fuse-git` and `hfsprogs` (available via AUR: `yay -S apfs-fuse-git hfsprogs`).
 - Clang / LLVM toolchain for cross-compiling the bare-metal shim.
@@ -110,7 +126,7 @@ python3 tools/mkpayload.py xnu/out-0081/xnu-kernel/kernel.pixel10 shim/out/pixel
 cd shim && ./build.sh ../shim/out/payload-pixel10.bin
 ```
 
-### 5. Boot on Pixel 10
+### 5. Boot on Device
 
 ```sh
 # Device in bootloader mode (fastboot)
@@ -139,7 +155,7 @@ fastboot boot shim/out/shim-boot-v4.img
 
 ## Important Constraints
 
-- **Fastboot RAM Boot Only:** Do not flash the boot partitions; use `fastboot boot <image>`.
+- **Fastboot RAM Boot Only (Development):** Use `fastboot boot <image>` to preserve the stock Android bootloader and partitions during development.
 - **Never Run `fastboot getvar`:** On Pixel 10 ABL, `fastboot getvar` can hang USB communication.
-- **Data Protection:** Flashing `userdata` replaces existing Android data. Confirm any write steps before proceeding.
+- **Data Protection:** Writing to `userdata` replaces existing Android data. Confirm any destructive write steps before proceeding.
 - **Proprietary Files:** Device dumps, serial numbers, and downloaded Apple DMGs remain outside of git (`ios-artifacts/`).
