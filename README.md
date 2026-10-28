@@ -88,21 +88,22 @@ Google ABL (stock Pixel 10 bootloader, unlocked)
 
 ### 2. Download Apple IPSW Artifacts
 
-Download the official iOS 16.7.16 (`20H392`, iPhone X `iPhone10,3`) DMGs from Apple CDN into `/home/redinn/IT_Stuff/Projects/ios-artifacts/` using `tools/remotezip.py`:
+Download the official iOS 16.7.16 (`20H392`, iPhone X `iPhone10,3`) DMGs from Apple CDN into a local `ios-artifacts/` directory using `tools/remotezip.py`:
 
 ```sh
-python3 tools/remotezip.py https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw 087-86698-044.dmg /home/redinn/IT_Stuff/Projects/ios-artifacts
-python3 tools/remotezip.py https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw 087-86593-047.dmg /home/redinn/IT_Stuff/Projects/ios-artifacts
-python3 tools/remotezip.py https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw 087-86715-047.dmg /home/redinn/IT_Stuff/Projects/ios-artifacts
+mkdir -p ios-artifacts
+python3 tools/remotezip.py https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw 087-86698-044.dmg ios-artifacts
+python3 tools/remotezip.py https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw 087-86593-047.dmg ios-artifacts
+python3 tools/remotezip.py https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw 087-86715-047.dmg ios-artifacts
 ```
 
 ### 3. Build the iOS Root Filesystem Image
 
 ```sh
 tools/mkiosroot.sh \
-    /home/redinn/IT_Stuff/Projects/ios-artifacts/087-86698-044.dmg \
-    /home/redinn/IT_Stuff/Projects/ios-artifacts/087-86593-047.dmg \
-    /home/redinn/IT_Stuff/Projects/ios-artifacts/087-86715-047.dmg \
+  ios-artifacts/087-86698-044.dmg \
+  ios-artifacts/087-86593-047.dmg \
+  ios-artifacts/087-86715-047.dmg \
     ios16-root-20H392.img 16G
 
 sudo fsck.hfsplus -fy ios16-root-20H392.img
