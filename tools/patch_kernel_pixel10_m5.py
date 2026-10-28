@@ -78,6 +78,14 @@ for idx, insn in enumerate(dma_bounce):
 struct.pack_into("<I", data, 0xa76f64, 0xd65f03c0)
 
 # 10. 0xa77030 (VA 0x7a7b030): ramoops_putc hook in fbcon_transmit_data
+# 10a. 0xa76f64 (VA 0x7a7af64): set cons_ops.flags = 1 in fbcon_probe so serial_init enables SERIAL_SWEET_FBCON
+fbcon_probe = [
+    0x52800028,  # mov w8, #1
+    0x39010288,  # strb w8, [x20, #0x40]
+    0xd65f03c0,  # ret
+]
+for idx, insn in enumerate(fbcon_probe):
+    struct.pack_into("<I", data, 0xa76f64 + idx * 4, insn)
 ramoops_putc = [
     0xb0002fc1,  # adrp x1, 0xfffffe0008074000
     0xf940b421,  # ldr x1, [x1, #0x168] (fbcon_base = RAMOOPS_CON VA)
@@ -106,7 +114,8 @@ for idx, insn in enumerate(ramoops_putc):
 
 # 11. 0xa775b0 (VA 0x7a7b5b0): replace ml_io_map_wcomb with ml_io_map (Device-nGnRnE)
 # to prevent speculative prefetch across 0x95400000 into bldr_log_reserved@95600000
-struct.pack_into("<I", data, 0xa775b0, 0x97e854b4)
+# Target: _ml_io_map at 0xfffffe0007490300; delta = 0x7490300 - 0x7a7b5b0 = -0x5eb2b0 -> 0x97e85354
+struct.pack_into("<I", data, 0xa775b0, 0x97e85354)
 
 # 12. 0x9f91ec (VA 0x79fd1ec): implement PSCI_SYSTEM_RESET (0x84000009) unconditionally in haltRestart
 # replacing Apple's entire function entry so both reboot() and panic() auto-reset via PSCI
@@ -144,6 +153,10 @@ PROBES = {
     "xnu_entry": 0x4890fc,  # start.s stage-0 (former UART "XNU ON" write)
     "md0": 0x4e8860,  # md0 mount hook, before sweet_usb_probe
     "md0_after_usb": 0x4e8864,  # md0 mount hook, after sweet_usb_probe returned
+    "ufs_entry": 0x4e2fb0,  # sweet_ufs_rootdev entry
+    "ufs_gpt": 0x4e3384,  # GPT EFI PART validated
+    "ufs_userdata": 0x4e34e0,  # userdata partition found in GPT
+    "ufs_done": 0x4e3690,  # sweet_ufs_rootdev completion & BSD device registration
 }
 probe = os.environ.get("SWEET_PROBE")
 if probe:
