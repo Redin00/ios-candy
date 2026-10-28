@@ -68,7 +68,8 @@ dma_bounce = [
     0x72b16008,  # movk w8, #0x8b00, lsl #16 (0x8b000000)
     0xd0005b29,  # adrp x9, 0xfffffe0008052000
     0xf9059128,  # str x8, [x9, #0xb20] (ud.dma_pa = 0x8b000000)
-    0x1400003c,  # b 0xfffffe00074ecc24
+    0x910123f6,  # add x22, sp, #0x48 (restore x22 pointer to ifnet_init_params!)
+    0x1400003b,  # b 0xfffffe00074ecc24
 ]
 for idx, insn in enumerate(dma_bounce):
     struct.pack_into("<I", data, 0x4e8b10 + idx * 4, insn)
@@ -80,19 +81,24 @@ struct.pack_into("<I", data, 0xa76f64, 0xd65f03c0)
 ramoops_putc = [
     0xb0002fc1,  # adrp x1, 0xfffffe0008074000
     0xf940b421,  # ldr x1, [x1, #0x168] (fbcon_base = RAMOOPS_CON VA)
-    0xb40001a1,  # cbz x1, +52 (ret)
-    0xb9400822,  # ldr w2, [x1, #8] (current size/len)
+    0xb4000241,  # cbz x1, +72 (ret at 0x7a7b080)
+    0xb9400022,  # ldr w2, [x1] (hdr[0])
+    0x52884883,  # mov w3, #0x4244
+    0x72a868e3,  # movk w3, #0x4347, lsl #16 (0x43474244 = 'DBGC')
+    0x6b03005f,  # cmp w2, w3
+    0x54000080,  # b.eq +16 (has_sig at 0x7a7b05c)
+    0xb9000023,  # str w3, [x1] (hdr[0] = 'DBGC')
+    0xb900043f,  # str wzr, [x1, #4] (hdr[1] = start = 0)
+    0xb900083f,  # str wzr, [x1, #8] (hdr[2] = size = 0)
+    0xb9400822,  # has_sig: ldr w2, [x1, #8] (current size)
     0x52800003,  # mov w3, #0
     0x72a003e3,  # movk w3, #0x1f, lsl #16 (0x1f0000 = MAX)
     0x6b03005f,  # cmp w2, w3
-    0x54000102,  # b.hs +32 (ret)
+    0x540000a2,  # b.hs +20 (ret at 0x7a7b080)
     0x91003024,  # add x4, x1, #12 (data buffer)
-    0x38224880,  # strb w0, [x4, w2, uxtw] (data[len] = c)
-    0x11000442,  # add w2, w2, #1 (len++)
+    0x38224880,  # strb w0, [x4, w2, uxtw] (data[size] = c)
+    0x11000442,  # add w2, w2, #1 (size++)
     0xb9000822,  # str w2, [x1, #8] (update size)
-    0x52884883,  # mov w3, #0x4244
-    0x72a868e3,  # movk w3, #0x4347, lsl #16 (0x43474244 = 'DBGC')
-    0xb9000023,  # str w3, [x1] (update sig)
     0xd65f03c0,  # ret
 ]
 for idx, insn in enumerate(ramoops_putc):
