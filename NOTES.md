@@ -78,7 +78,7 @@
 ### Milestone 6: Full iOS 16 Root Mount from UFS & Apple `launchd`
 - **Target Partition:** Internal UFS `userdata` partition `/dev/block/sda35` (LUN 0, 220 GiB, 4096-byte blocks).
 - **Apple Artifacts (Downloaded & Verified):**
-  - Downloaded official Apple iOS 16.7.16 (`20H392`, iPhone X `iPhone10,3`) restore DMGs via `tools/remotezip.py` into `/home/redinn/IT_Stuff/Projects/ios-artifacts/`:
+  - Downloaded official Apple iOS 16.7.16 (`20H392`, iPhone X `iPhone10,3`) restore DMGs via `tools/remotezip.py` into `ios-artifacts/`:
     - `087-86698-044.dmg` (OS rootfs, 4,730,814,044 bytes, CRC-32 ok)
     - `087-86593-047.dmg` (SystemOS cryptex, 2,743,074,816 bytes, CRC-32 ok)
     - `087-86715-047.dmg` (AppOS cryptex, 10,485,760 bytes, CRC-32 ok)
@@ -96,7 +96,7 @@
     - Both `ufs_userdata` and `ufs_done` probes executed cleanly, triggering automated warm PSCI reset back to Android (`ADB_UP` verified in 1m35s, `ro.boot.bootreason = reboot`, `cdd_reboot_reason = 1:0000`).
     - Android installation, partitions, and user data remained 100% untouched.
 - **Step 2 (Active / Next):**
-  - **Userdata Partition Dump:** Stream full raw `/dev/block/sda35` (236,704,583,680 bytes / 220.45 GiB) to `/home/redinn/IT_Stuff/Projects/ios-artifacts/userdata_backup_pixel10.img.gz` using `tools/dump_userdata.py` with on-the-fly `gzip -1` compression and continuous SHA-256 verification (background task active).
+  - **Userdata Partition Dump:** Stream full raw `/dev/block/sda35` (236,704,583,680 bytes / 220.45 GiB) to `ios-artifacts/userdata_backup_pixel10.img.gz` using `tools/dump_userdata.py` with on-the-fly `gzip -1` compression and continuous SHA-256 verification (background task active).
   - Build HFS+ root image `ios16-root-20H392.img` with `tools/mkiosroot.sh` using host tools `apfs-fuse-git` and `hfsprogs`.
   - Apply `tools/sweet-root-tweaks.py`.
   - Flash to `userdata` (`fastboot flash -S 512M userdata ios16-root-20H392.simg`) after confirming backup/destructive step with user.

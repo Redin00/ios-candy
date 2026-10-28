@@ -1,16 +1,16 @@
-# QEMU Emulation & Testing Guide for ios-sweet
+# QEMU Emulation & Testing Guide for ios-sweet (Pixel 10)
 
-This document explains how to test the patched Apple XNU kernel for the Redmi Note 10 Pro (`sweet`, SM7150) in QEMU virtual machine without touching physical hardware or risking device user data.
+This document explains how to test the patched Apple XNU kernel for the Google Pixel 10 (`frankel`, Tensor G5) in a QEMU virtual machine without touching physical hardware or risking device user data.
 
 ---
 
 ## 1. Overview
 
 `tools/qemu-sweet.py` emulates the bare-metal boot shim loader on your host system:
-- It configures `qemu-system-aarch64` on the `virt` board with `gic-version=3` and CPU `cortex-a76` (matching the Kryo 470 Gold cores' `ID_AA64MMFR0` architecture).
-- It covers the physical memory layout (framebuffer at `0x9c000000`, kernel base at `0xb0000000`).
-- It extracts the visual 1080×2400 framebuffer into `fb.png`, captures registers into `regs.txt`, and logs exception interrupts into `qemu.log`.
-- When provided with an unstripped kernel Mach-O, it automatically extracts `_iso_font` and decodes the framebuffer console text into `fb.txt` and `result.json`.
+- It configures `qemu-system-aarch64` on the `virt` board with `gic-version=3` and ARMv8/ARMv9 64-bit CPU architecture.
+- It covers the physical memory layout (kernel base, upper RAM bank at `0x880000000`, device tree, and mockfs ramdisk).
+- It extracts the visual console framebuffer, captures CPU registers, and logs guest exceptions into `qemu.log`.
+- When provided with an unstripped kernel Mach-O, it automatically decodes the framebuffer console text into `fb.txt` and `result.json`.
 
 ---
 

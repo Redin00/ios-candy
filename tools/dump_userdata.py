@@ -15,8 +15,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Dump Android block device over ADB.")
     parser.add_argument(
         "--out",
-        default="/home/redinn/IT_Stuff/Projects/ios-artifacts/userdata_backup_pixel10.img.gz",
-        help="Destination file path (default: .img.gz)"
+        default=os.path.join(os.environ.get("ARTIFACTS_DIR", "ios-artifacts"), "userdata_backup_pixel10.img.gz"),
+        help="Destination file path (default: ios-artifacts/userdata_backup_pixel10.img.gz)"
     )
     parser.add_argument(
         "--dev",
