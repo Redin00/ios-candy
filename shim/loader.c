@@ -76,6 +76,26 @@ static int magic_ok(const char *m)
 
 typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 
+/*
+ * Bisection: build with SHIM_CFLAGS=-DSHIM_PROBE=n to PSCI-reset at probe n.
+ * A warm reset back into Android means probe n was reached; the shim log
+ * survives in pmsg-ramoops.
+ */
+#ifndef SHIM_PROBE
+#define SHIM_PROBE 0
+#endif
+static void probe(int n)
+{
+	if (n != SHIM_PROBE)
+		return;
+	con_hex("PROBE", n);
+	con_flush();
+	register uint64_t x0 __asm__("x0") = 0x84000009UL;	/* PSCI_SYSTEM_RESET */
+	__asm__ volatile("smc #0" : "+r"(x0) : : "memory");
+	for (;;)
+		__asm__ volatile("wfe");
+}
+
 static void disable_wdt(void)
 {
 	volatile uint32_t *wdt0 = (volatile uint32_t *)0x200c4000UL;
@@ -115,6 +135,7 @@ const char *loader_boot(uintptr_t dtb)
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
 		return "no initrd in /chosen";
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
+	probe(1);
 
 	const struct payload *p = (const struct payload *)rd_start;
 	if (!magic_ok(p->magic))
@@ -139,6 +160,7 @@ const char *loader_boot(uintptr_t dtb)
 			zero64(dst + ((s->file_size + 7) & ~7UL), s->vmsize - ((s->file_size + 7) & ~7UL));
 	}
 	con_hex2("SEGS", "n=", p->nsegs, "end=", p->kernel_end + pa_of_va_base);
+	probe(2);
 
 	/* ADT, then boot_args, behind the kernel; everything below topOfKernelData is ours. */
 	uintptr_t adt_pa = p->kernel_end + pa_of_va_base;
@@ -170,9 +192,12 @@ const char *loader_boot(uintptr_t dtb)
 	uintptr_t entry_pa = p->entry_va + pa_of_va_base;
 	con_hex("JUMP", entry_pa);
 	con_str("XNU", "jumping to xnu entry");
+	probe(3);
 	disable_wdt();
+	probe(4);
 	usb_vbus_enable();
 	con_flush();
+	probe(5);
 
 	/* Everything was written with the MMU and caches off; drop any stale I-cache lines too. */
 	__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");

@@ -6,7 +6,7 @@ CC="clang --target=aarch64-linux-gnu"
 OBJCOPY=llvm-objcopy
 READELF=llvm-readelf
 NM=llvm-nm
-CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -fno-jump-tables -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra"
+CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -fno-jump-tables -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra ${SHIM_CFLAGS:-}"
 mkdir -p out
 for f in start.S shim.c console.c mmu.c fdt.c loader.c; do
 	$CC $CFLAGS -c $f -o out/${f%.*}.o
