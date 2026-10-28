@@ -92,7 +92,7 @@ ramoops_putc = [
     0xb900083f,  # str wzr, [x1, #8] (hdr[2] = size = 0)
     0xb9400822,  # has_sig: ldr w2, [x1, #8] (current size)
     0x52800003,  # mov w3, #0
-    0x72a003e3,  # movk w3, #0x1f, lsl #16 (0x1f0000 = MAX)
+    0x72a001e3,  # movk w3, #0x0f, lsl #16 (0x0f0000 = MAX)
     0x6b03005f,  # cmp w2, w3
     0x540000a2,  # b.hs +20 (ret at 0x7a7b080)
     0x91003024,  # add x4, x1, #12 (data buffer)
@@ -103,6 +103,10 @@ ramoops_putc = [
 ]
 for idx, insn in enumerate(ramoops_putc):
     struct.pack_into("<I", data, 0xa77030 + idx * 4, insn)
+
+# 11. 0xa775b0 (VA 0x7a7b5b0): replace ml_io_map_wcomb with ml_io_map (Device-nGnRnE)
+# to prevent speculative prefetch across 0x95400000 into bldr_log_reserved@95600000
+struct.pack_into("<I", data, 0xa775b0, 0x97e854b4)
 
 open(PATH, "wb").write(data)
 print(f"Successfully applied Milestone 5 patches to {PATH}")

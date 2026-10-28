@@ -12,7 +12,7 @@
 #define LABEL_COLS	9
 
 #define RAMOOPS_SIG	0x43474244U	/* 'DBGC' */
-#define RAMOOPS_MAX	0x001f0000U
+#define RAMOOPS_MAX	0x000f0000U
 
 volatile uint32_t *con_fb = 0;
 static volatile uint32_t *con_fb_alt = 0;
